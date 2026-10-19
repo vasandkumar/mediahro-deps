@@ -28,7 +28,7 @@ SYSTEM = re.compile(
     r"^(api-ms-win-.*|ext-ms-win-.*|kernel32|kernelbase|user32|gdi32|advapi32|shell32|shlwapi|ole32|oleaut32|"
     r"ws2_32|wsock32|iphlpapi|dnsapi|secur32|crypt32|bcrypt|ncrypt|cfgmgr32|setupapi|winmm|avrt|mfplat|mf|mfuuid|"
     r"mfreadwrite|propsys|dxgi|d3d11|d3d12|d3d9|dxva2|dcomp|dwrite|d2d1|usp10|version|psapi|dbghelp|ntdll|"
-    r"rpcrt4|userenv|netapi32|mpr|imm32|comctl32|comdlg32|uxtheme|dwmapi|winhttp|wininet|normaliz|wldap32|"
+    r"rpcrt4|userenv|netapi32|mpr|imm32|comctl32|comdlg32|uxtheme|dwmapi|winhttp|wininet|normaliz|wldap32|xmllite|"
     r"vulkan-1|opengl32|ucrtbase|vcruntime140|vcruntime140_1|msvcp140|msvcp140_1|msvcp140_2|concrt140|vcomp140)\.dll$",
     re.I,
 )

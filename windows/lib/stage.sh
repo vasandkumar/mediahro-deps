@@ -23,7 +23,12 @@ stage_target() {
   "$HOST_PY" -I "$(w "$HERE/lib/stage_libs.py")" "$(w "$PREFIX/lib")" "$(w "$st/lib")" "$(w "$st/bin")" ||
     die "$TARGET: an import library names a DLL that is not staged"
   cp -r "$PREFIX/include/." "$st/include/"
-  [ -d "$PREFIX/etc/fonts" ] && cp -r "$PREFIX/etc/fonts" "$st/etc/"
+  # conf.d entries are symlinks into share/fontconfig/conf.avail: write the
+  # file contents (cp -L trips over some MSYS native symlinks).
+  if [ -d "$PREFIX/etc/fonts" ]; then
+    (cd "$PREFIX/etc" && find fonts -type d) | while IFS= read -r d; do mkdir -p "$st/etc/$d"; done
+    (cd "$PREFIX/etc" && find fonts ! -type d) | while IFS= read -r f; do cat "$PREFIX/etc/$f" > "$st/etc/$f"; done
+  fi
   # Relocatable pkg-config files: prefix relative to the .pc location.
   for f in "$PREFIX"/lib/pkgconfig/*.pc "$PREFIX"/share/pkgconfig/*.pc; do
     [ -f "$f" ] || continue
