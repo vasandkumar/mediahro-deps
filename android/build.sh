@@ -286,9 +286,6 @@ recipes() {
   cmake_build brotli -DBROTLI_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF -DBROTLI_DISABLE_TESTS=ON
   cmake_build libdeflate -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_SHARED_LIB=ON -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF
   cmake_build expat -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DEXPAT_BUILD_FUZZERS=OFF -DEXPAT_SHARED_LIBS=ON
-  # SUB-013: bionic's iconv only converts UTF-8/16/32, ASCII and Latin-1. GNU libiconv (LGPL, shared) gives mpv and
-  # FFmpeg cp1251, Shift-JIS, GBK, Big5, EUC-KR and the rest. FFmpeg's configure falls back to -liconv by itself.
-  AUTOTOOLS_SUBDIRS="libcharset lib" AUTOTOOLS_POST='install -m644 include/iconv.h.inst "$PREFIX/include/iconv.h"'     autotools_build libiconv --disable-nls --enable-extra-encodings
   autotools_build libffi --disable-docs --disable-multi-os-directory --disable-exec-static-tramp
   cmake_build pcre2 -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_JIT=OFF -DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=OFF -DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_STATIC_PIC=ON
   # glib takes its libintl shim as a meson subproject (bionic has no gettext).
@@ -391,6 +388,13 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   autotools_build libraw --disable-examples --disable-openmp --enable-lcms --enable-jpeg --disable-jasper --enable-zlib
   mapfile -t VIPS_FLAGS < <(flags vips.flags; flags vips.android.flags)
   meson_build libvips "${VIPS_FLAGS[@]}"
+
+  # SUB-013: bionic's iconv only converts UTF-8/16/32, ASCII and Latin-1. GNU libiconv (LGPL, shared) gives mpv and
+  # FFmpeg cp1251, Shift-JIS, GBK, Big5, EUC-KR and the rest. Only its library directories are built (not the GPL
+  # `iconv` program). It is built right before FFmpeg: libraries built earlier (glib, fontconfig, ...) must not see
+  # its iconv.h, which renames iconv() to libiconv() and needs a -liconv they do not pass.
+  AUTOTOOLS_SUBDIRS="libcharset lib" AUTOTOOLS_POST='install -m644 include/iconv.h.inst "$PREFIX/include/iconv.h"' \
+    autotools_build libiconv --disable-nls --enable-extra-encodings
 
   # FFmpeg
   mapfile -t FF_FLAGS < <(flags ffmpeg.common.flags; flags ffmpeg.android.flags)
