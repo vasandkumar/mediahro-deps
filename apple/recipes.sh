@@ -457,7 +457,18 @@ build_libplacebo() {
 
 build_ffmpeg() {
   local s arch b; s=$(src ffmpeg)
-  read_flags "$ROOT/flags/ffmpeg.common.flags"; local common=("${FLAGS[@]}")
+  read_flags "$ROOT/flags/ffmpeg.common.flags"
+  # A --disable-X for a component upstream has removed (FFmpeg 8 dropped
+  # libpostproc, so --disable-postproc is unknown) is a no-op: skip it, loudly.
+  local help common=() f
+  help=$("$s/configure" --help)
+  for f in "${FLAGS[@]}"; do
+    if [[ $f == --disable-* ]] && ! grep -qE -- "--(en|dis)able-${f#--disable-}([ =]|$)" <<<"$help"; then
+      echo "ffmpeg: skipping $f (not an option of FFmpeg $(pin_version ffmpeg))" >>"$WORK/notes.txt"
+      continue
+    fi
+    common+=("$f")
+  done
   read_flags "$ROOT/flags/ffmpeg.apple.flags"; local apple=("${FLAGS[@]}")
   case $ARCH in arm64) arch=aarch64 ;; x86_64) arch=x86_64 ;; esac
   b="$BUILD/ffmpeg"
