@@ -34,7 +34,7 @@ src() {
   dir="$SLICE_DIR/src/$name"
   rm -rf "$dir"
   mkdir -p "$SLICE_DIR/src"
-  cp -R "$SOURCES/$name" "$dir"
+  cp -Rp "$SOURCES/$name" "$dir"   # -p: keep mtimes so make never re-runs autoconf
   rm -f "$dir/.mediahro-sha256" "$dir/.mediahro-commit"
   printf '%s\n' "$dir"
 }
