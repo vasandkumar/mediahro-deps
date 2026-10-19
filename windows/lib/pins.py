@@ -84,7 +84,7 @@ def _download(e: dict, cache: Path) -> Path:
         if e["url"].startswith(prefix):
             urls += [a + e["url"][len(prefix):] for a in alts]
     errors = []
-    for attempt in range(3):
+    for attempt in range(6):
         for url in urls:
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "mediahro-deps-build"})
@@ -94,7 +94,7 @@ def _download(e: dict, cache: Path) -> Path:
                 return dest
             except OSError as err:
                 errors.append(f"{url}: {err}")
-        time.sleep(5 * (attempt + 1))
+        time.sleep(15 * (attempt + 1))
     raise SystemExit("pins: download failed:\n  " + "\n  ".join(errors))
 
 

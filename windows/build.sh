@@ -55,6 +55,13 @@ HOST_PY=$(find_python)
 setup_tools
 ( T=$WORK/host; mkdir -p "$T"; load_msvc_env x64; build_host_pkgconf )
 
+# Download and verify every source the recipes use before building anything,
+# so a network or hash problem stops the build in its first minutes.
+for src in $(grep -oE '\$\(fetch [A-Za-z0-9._-]+\)' "$HERE/lib/recipes.sh" | sed 's/^$(fetch //; s/)$//' | sort -u); do
+  fetch "$src" > /dev/null
+done
+log "all sources verified"
+
 want() {  # want RECIPE: honour MEDIAHRO_ONLY
   [ -z "${MEDIAHRO_ONLY:-}" ] && return 0
   case ",$MEDIAHRO_ONLY," in *",$1,"*) return 0 ;; esac
