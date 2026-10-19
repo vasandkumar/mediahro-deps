@@ -479,6 +479,7 @@ stage_abi() {
 for p in sorted(pathlib.Path(sys.argv[1]).glob("*.json")):
     print(*[f for f in json.loads(p.read_text()).get("files", []) if f.endswith(".so")])' "$INFO"); do
     [[ " $DROP_LIBS " == *" $name "* ]] && continue
+    [ -L "$PREFIX/lib/$name" ] && continue  # e.g. libOpenEXR.so -> libOpenEXR-3_5.so: ship the real file once
     cp "$PREFIX/lib/$name" "$st/lib/"
   done
   cp "$TOOLCHAIN/sysroot/usr/lib/$HOST/libc++_shared.so" "$st/lib/"
