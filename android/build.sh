@@ -413,7 +413,7 @@ recipes() {
 
   # Audio analysis and speech
   cmake_build libebur128 -DBUILD_STATIC_LIBS=OFF -DENABLE_TESTS=OFF
-  cmake_build chromaprint -DFFT_LIB=kissfft -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF
+  cmake_build chromaprint -DFFT_LIB=avtx -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF
   local ggml=(-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF)
   [ "$ABI" = x86_64 ] && ggml+=(-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF -DGGML_SSE42=ON)
   cmake_build whisper.cpp -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_SDL2=OFF \
@@ -447,7 +447,7 @@ check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unver
       [[ "$need" =~ ^lib(ssl|crypto|gnutls|mbed|wolfssl|boringssl) ]] && { echo "elf: $n links TLS library $need"; errs=$((errs+1)); }
     done
     if [ "$ABI" = arm64-v8a ]; then
-      "$READELF" -nW "$so" | grep -q 'AArch64 feature: BTI, PAC' || echo "elf: note: $n lacks BTI/PAC property (an object was built without -mbranch-protection)"
+      grep -qi 'aarch64 feature: BTI, PAC' <<<"$("$READELF" -nW "$so")" || echo "elf: note: $n lacks BTI/PAC property (an object was built without -mbranch-protection)"
     fi
   done
   return $errs
@@ -488,7 +488,7 @@ stage_abi() {
     } > "$st/licenses/$name.txt"
     [ -s "$st/licenses/$name.txt" ] || { echo "build: no licence text found for $name" >&2; exit 1; }
   done
-  { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; cat "$NDK/NOTICE" 2>/dev/null | head -c 200000; } > "$st/licenses/libc++.txt"
+  { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; head -c 200000 "$NDK/NOTICE" 2>/dev/null || true; } > "$st/licenses/libc++.txt"
   check_elf "$st/lib"
   local gpl
   gpl="$(python3 - "$st/build-info" <<'PY'
