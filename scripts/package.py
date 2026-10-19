@@ -56,6 +56,10 @@ def source_of(lib: dict) -> dict:
         if lib.get(key):
             url = url.replace("{" + key + "}", str(lib[key]))
     src = {"url": url, "sha256": lib.get("sha256")}
+    patches = sorted((ROOT / "patches" / lib["name"]).glob("*.patch"))
+    if patches:
+        src["patches"] = [{"file": p.relative_to(ROOT).as_posix(), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+                          for p in patches]
     if lib.get("commit"):
         src["commit"] = lib["commit"]
     return src

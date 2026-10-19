@@ -1,0 +1,53 @@
+LGPL build: leave out FFmpeg 8.1 files that carry GPL-only licence headers
+but are compiled even without --enable-gpl (Mediahro docs/09 §2: no GPL code).
+
+- libavcodec/aarch64/ac3dsp_init_aarch64.c, ac3dsp_neon.S (GPL-2.0-or-later):
+  AC-3 DSP NEON for aarch64; the C implementation is used instead.
+- libavutil/aarch64/crc.S (GPL-2.0-or-later): CRC32 with ARMv8 CRC instructions;
+  configure also gets --disable-arm-crc (flags/ffmpeg.common.flags), so the
+  table-driven C CRC is used.
+The perlin and codecview filters (perlin.c, qp_table.c are GPL) are disabled in
+flags/ffmpeg.common.flags instead. Found by scripts/source_scan.py.
+
+diff -ru a/libavcodec/aarch64/Makefile b/libavcodec/aarch64/Makefile
+--- a/libavcodec/aarch64/Makefile
++++ b/libavcodec/aarch64/Makefile
+@@ -1,5 +1,4 @@
+ # subsystems
+-OBJS-$(CONFIG_AC3DSP)                   += aarch64/ac3dsp_init_aarch64.o
+ OBJS-$(CONFIG_FDCTDSP)                  += aarch64/fdctdsp_init_aarch64.o
+ OBJS-$(CONFIG_FMTCONVERT)               += aarch64/fmtconvert_init.o
+ OBJS-$(CONFIG_H264CHROMA)               += aarch64/h264chroma_init_aarch64.o
+@@ -42,7 +41,6 @@
+ # subsystems
+ NEON-OBJS-$(CONFIG_AAC_DECODER)         += aarch64/sbrdsp_neon.o
+ NEON-OBJS-$(CONFIG_AAC_ENCODER)         += aarch64/aacencdsp_neon.o
+-NEON-OBJS-$(CONFIG_AC3DSP)              += aarch64/ac3dsp_neon.o
+ NEON-OBJS-$(CONFIG_FDCTDSP)             += aarch64/fdctdsp_neon.o
+ NEON-OBJS-$(CONFIG_FMTCONVERT)          += aarch64/fmtconvert_neon.o
+ NEON-OBJS-$(CONFIG_H264CHROMA)          += aarch64/h264cmc_neon.o
+diff -ru a/libavcodec/ac3dsp.c b/libavcodec/ac3dsp.c
+--- a/libavcodec/ac3dsp.c
++++ b/libavcodec/ac3dsp.c
+@@ -389,9 +389,7 @@
+     c->downmix               = NULL;
+     c->downmix_fixed         = NULL;
+ 
+-#if ARCH_AARCH64
+-    ff_ac3dsp_init_aarch64(c);
+-#elif ARCH_ARM
++#if ARCH_ARM
+     ff_ac3dsp_init_arm(c);
+ #elif ARCH_X86 && HAVE_X86ASM
+     ff_ac3dsp_init_x86(c);
+diff -ru a/libavutil/aarch64/Makefile b/libavutil/aarch64/Makefile
+--- a/libavutil/aarch64/Makefile
++++ b/libavutil/aarch64/Makefile
+@@ -2,7 +2,6 @@
+         aarch64/float_dsp_init.o                                      \
+         aarch64/tx_float_init.o                                       \
+ 
+-ARMV8-OBJS += aarch64/crc.o
+ 
+ NEON-OBJS += aarch64/float_dsp_neon.o                                 \
+              aarch64/tx_float_neon.o                                  \

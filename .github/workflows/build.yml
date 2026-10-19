@@ -85,7 +85,7 @@ jobs:
       - name: Source bundle
         run: |
           mkdir -p dist
-          cp versions.json "$RUNNER_TEMP/sources/" && cp -r keys "$RUNNER_TEMP/sources/"
+          cp versions.json "$RUNNER_TEMP/sources/" && cp -r keys patches "$RUNNER_TEMP/sources/"
           name="mediahro-deps-sources.tar"
           tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@1767225600 -C "$RUNNER_TEMP" -cf "dist/$name" sources
           (cd dist && sha256sum "$name" > "$name.sha256" && cat "$name.sha256")
