@@ -536,7 +536,8 @@ build_ffmpeg() {
   local help common=() f
   help=$("$s/configure" --help)
   for f in "${FLAGS[@]}"; do
-    if [[ $f == --disable-* ]] && ! grep -qE -- "--(en|dis)able-${f#--disable-}([ =]|$)" <<<"$help"; then
+    local opt=${f%%=*}
+    if [[ $opt == --disable-* ]] && ! grep -qE -- "--(en|dis)able-${opt#--disable-}([ =]|$)" <<<"$help"; then
       echo "ffmpeg: skipping $f (not an option of FFmpeg $(pin_version ffmpeg))" >>"$WORK/notes.txt"
       continue
     fi
