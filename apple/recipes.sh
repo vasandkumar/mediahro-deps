@@ -205,7 +205,7 @@ build_libtiff() {
   local s; s=$(src libtiff)
   cmake_build libtiff "$s" -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF \
     -Dtiff-deprecated=OFF -Dcxx=OFF -Djbig=OFF -Dlerc=OFF -Dlzma=OFF -Dzstd=OFF -Dlibdeflate=OFF \
-    -Dwebp=ON -Djpeg=ON -Dzlib=ON -Dpixarlog=ON -Dold-jpeg=OFF -Djpeg12=OFF
+    -Dwebp=ON -Djpeg=ON -Dzlib=ON -Dpixarlog=ON -Dold-jpeg=OFF -Djpeg12=OFF -Dtiff-framework=OFF
   license libtiff "$s/LICENSE.md"
 }
 

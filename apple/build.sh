@@ -96,6 +96,9 @@ for slice in $SLICES; do
     t0=$SECONDS
     "build_$r"
     echo "$SLICE $r $((SECONDS - t0))s" >>"$TIMES"
+    if compgen -G "$PREFIX/lib/*.framework" >/dev/null; then
+      die "$r installed a .framework into $PREFIX/lib; build it as a plain dylib (frameworks are assembled later)"
+    fi
     for f in "$PREFIX"/lib/*.dylib; do
       [ -e "$f" ] && [ ! -L "$f" ] || continue
       printf '%s\n' "$before" | grep -qxF "$f" && continue
@@ -130,6 +133,10 @@ stage_target() { # TARGET OS HEADER_SLICE GROUP...
   mkdir -p "$st/include" "$st/licenses"
   make_xcframeworks "$st/lib" "$@"
   cp -R "$WORK/$hslice/prefix/include/." "$st/include/"
+  # glib keeps its arch-specific glibconfig.h under lib/; ship it next to glib.h.
+  if [ -f "$WORK/$hslice/prefix/lib/glib-2.0/include/glibconfig.h" ]; then
+    cp "$WORK/$hslice/prefix/lib/glib-2.0/include/glibconfig.h" "$st/include/glib-2.0/"
+  fi
   cp "$LICENSES"/*.txt "$st/licenses/"
   {
     echo "{"
