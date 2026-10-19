@@ -208,7 +208,9 @@ r_ffmpeg() {
     # Table generators run on the x64 build machine: x64 CRT/SDK libraries
     # ahead of vcvars' arm64 LIB, and an x64 image.
     local sdk; sdk=$(cygpath -m "${WindowsSdkDir}Lib/${WindowsSDKVersion}"); sdk=${sdk%/}
-    cross=(--enable-cross-compile)
+    # Assemble the GNU-syntax .S files with clang-cl's integrated assembler;
+    # armasm64 behind gas-preprocessor would be handed every C flag.
+    cross=(--enable-cross-compile --as="$cc")
     host=(--host-cc="clang-cl -target x86_64-pc-windows-msvc" --host-ld="$s/compat/windows/mslink"
           --host-ldflags="-MACHINE:X64 -LIBPATH:$(cygpath -m "$VCToolsInstallDir")lib/x64 -LIBPATH:$sdk/ucrt/x64 -LIBPATH:$sdk/um/x64")
   fi
@@ -524,6 +526,8 @@ r_libsmb2() {
 r_libnfs() {
   local s; s=$(fetch libnfs)
   cmake_build "$s" "$B" -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF
+  # win32/libnfs.def says "LIBRARY libnfs", so nfs.lib imports from libnfs.dll.
+  mv -f "$PREFIX/bin/nfs.dll" "$PREFIX/bin/libnfs.dll"
   license libnfs "$s/COPYING" "$s/LICENCE-LGPL-2.1.txt"
   built libnfs
 }

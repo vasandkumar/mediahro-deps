@@ -20,7 +20,8 @@ stage_target() {
     cp "$f" "$st/bin/"
   done
   # Import libraries only; static archives from build-internal pieces stay out.
-  "$HOST_PY" -I "$(w "$HERE/lib/stage_libs.py")" "$(w "$PREFIX/lib")" "$(w "$st/lib")" "$(w "$st/bin")"
+  "$HOST_PY" -I "$(w "$HERE/lib/stage_libs.py")" "$(w "$PREFIX/lib")" "$(w "$st/lib")" "$(w "$st/bin")" ||
+    die "$TARGET: an import library names a DLL that is not staged"
   cp -r "$PREFIX/include/." "$st/include/"
   [ -d "$PREFIX/etc/fonts" ] && cp -r "$PREFIX/etc/fonts" "$st/etc/"
   # Relocatable pkg-config files: prefix relative to the .pc location.
