@@ -1,11 +1,10 @@
 # FFmpeg configure flags shared by every target (docs/05 §4.1, §10; docs/09 §2).
-# LGPL-2.1+: never --enable-gpl, --enable-nonfree or --enable-version3.
+# LGPL-2.1+: never --enable-gpl, --enable-nonfree or --enable-version3. libpostproc (GPL) no longer exists in FFmpeg 8.
 --enable-shared
 --disable-static
 --disable-programs
 --disable-doc
 --disable-debug
---disable-postproc
 --disable-avdevice
 --disable-autodetect
 --disable-openssl
