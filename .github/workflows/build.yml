@@ -74,6 +74,24 @@ jobs:
         env: { PLATFORMS: "${{ inputs.platforms || 'android,apple,windows' }}" }
         run: for p in android apple windows; do [[ ",${PLATFORMS// /}," == *",$p,"* ]] && echo "$p=true" >> "$GITHUB_OUTPUT" || echo "$p=false" >> "$GITHUB_OUTPUT"; done
 
+  sources:
+    # The exact upstream sources of every build (LGPL source offer, docs/09 §2): published with the release.
+    needs: plan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch and verify every pinned source
+        run: python3 scripts/sources.py fetch --dest "$RUNNER_TEMP/src" --cache "$RUNNER_TEMP/sources" --skip openscreen-libcast
+      - name: Source bundle
+        run: |
+          mkdir -p dist
+          cp versions.json "$RUNNER_TEMP/sources/" && cp -r keys "$RUNNER_TEMP/sources/"
+          name="mediahro-deps-sources.tar"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@1767225600 -C "$RUNNER_TEMP" -cf "dist/$name" sources
+          (cd dist && sha256sum "$name" > "$name.sha256" && cat "$name.sha256")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: deps-sources, path: dist/, if-no-files-found: error }
+
   android:
     needs: plan
     if: needs.plan.outputs.android == 'true'
@@ -147,8 +165,10 @@ jobs:
   release:
     # Publishes every platform that built. A tag with a pre-release suffix (v…-…) or a
     # missing platform becomes a GitHub pre-release; the notes list what is missing.
-    needs: [android, apple, windows]
-    if: always() && startsWith(github.ref, 'refs/tags/v') && contains(needs.*.result, 'success')
+    needs: [sources, android, apple, windows]
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/v') && needs.sources.result == 'success' &&
+      (needs.android.result == 'success' || needs.apple.result == 'success' || needs.windows.result == 'success')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -172,8 +192,9 @@ jobs:
             echo "Native dependency archives for Mediahro (pin in deps.lock)."
             echo
             echo "Built from ${GITHUB_SHA}. Every archive carries manifest.json (licence, linking, configure line, source URL and SHA-256, GPL source scan) and licenses/."
+            echo "mediahro-deps-sources.tar holds the exact upstream sources of this build (source offer for the LGPL libraries)."
             [ -z "$missing" ] || { echo; echo "Not in this release:$missing"; }
             echo; echo '```'; cat dist/SHA256SUMS; echo '```'
           } > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 dist/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar dist/*.sha256 dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md $pre
