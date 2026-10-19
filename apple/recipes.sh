@@ -470,7 +470,7 @@ Cflags: -I\${includedir}
 EOF
   license moltenvk "$s/LICENSE"
   local cereal
-  cereal=$(find "$CACHE/cpm" "$BUILD/moltenvk" -name LICENSE -path '*cereal*' 2>/dev/null | head -1)
+  cereal=$(find "$CACHE/cpm" "$BUILD/moltenvk" -name LICENSE -path '*cereal*' -print -quit 2>/dev/null || true)
   [ -n "$cereal" ] || die "MoltenVK: cereal licence not found in the CPM cache"
   # Appended to MoltenVK's licence file: cereal is compiled into libMoltenVK.
   { printf '==> cereal (compiled into libMoltenVK, commit %s) <==\n' "$(cat "$s/ExternalRevisions/cereal_repo_revision")"
