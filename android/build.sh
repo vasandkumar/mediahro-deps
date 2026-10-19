@@ -259,7 +259,6 @@ recipes() {
   local vk="$SRC/vulkan-headers"
 
   header_only vulkan-headers "include=$vk/include"
-  header_only spirv-headers
   header_only fast_float
   header_only glad "generator for libplacebo's OpenGL loader"
 
