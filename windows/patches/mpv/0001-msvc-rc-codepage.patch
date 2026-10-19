@@ -1,0 +1,16 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1762,7 +1762,12 @@
+ # build targets
+ if win32
+     windows = import('windows')
+-    res_flags = ['--codepage=65001']
++    # mediahro-deps: rc.exe (MSVC / clang-cl builds) spells it /c 65001.
++    if cc.get_argument_syntax() == 'msvc'
++        res_flags = ['/c', '65001']
++    else
++        res_flags = ['--codepage=65001']
++    endif
+
+     # Unintuitively, this compile operates out of the osdep subdirectory.
+     # Hence, these includes are needed.
