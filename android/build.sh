@@ -88,10 +88,16 @@ setup_abi() {
   local probe=""
   "$CC" -fstack-clash-protection -Werror -x c -c /dev/null -o /dev/null 2>/dev/null && probe="-fstack-clash-protection"
   # The optimisation level comes per library from opt_level (install size, docs/11 §5).
-  HARDEN="-fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong $probe $ARCH_FLAGS -ffunction-sections -fdata-sections"
+  # Size optimisations (ADR-020). Each can be switched off to measure what it buys:
+  # MEDIAHRO_NO_LTO, MEDIAHRO_NO_ICF, MEDIAHRO_NO_GC, MEDIAHRO_ALL_O2 (see android/README.md).
+  local lto="-flto=thin" gc="-ffunction-sections -fdata-sections" ldgc="-Wl,--gc-sections" icf="-Wl,--icf=all"
+  [ -n "${MEDIAHRO_NO_LTO:-}" ] && lto=""
+  [ -n "${MEDIAHRO_NO_GC:-}" ] && { gc=""; ldgc=""; }
+  [ -n "${MEDIAHRO_NO_ICF:-}" ] && icf=""
+  HARDEN="-fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong $probe $ARCH_FLAGS $gc $lto"
   # FFmpeg 8 and libplacebo need newer Vulkan headers than the NDK sysroot has.
   VKINC="-I$SRC/vulkan-headers/include"
-  LDHARDEN="-Wl,-z,max-page-size=16384 -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,--build-id=sha1 -Wl,--gc-sections"
+  LDHARDEN="-Wl,-z,max-page-size=16384 -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,--build-id=sha1 $ldgc $icf $lto"
   export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
   unset PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
   CROSS="$WORK/$ABI/meson-cross.ini"
@@ -135,9 +141,11 @@ EOF
 # --- build helpers ----------------------------------------------------------------------
 
 # Install size (docs/11 §5): libraries off the playback / decode hot path are built with -Os.
-SIZE_LIBS="bzip2 brotli libdeflate expat libffi pcre2 glib freetype fribidi harfbuzz fontconfig libass uchardet shaderc
+# Decode and render hot paths (FFmpeg, dav1d, libplacebo, mpv, libass + freetype/harfbuzz/fribidi for subtitle
+# rendering, image codecs, whisper) stay at -O2 so no speed budget moves (ADR-020).
+SIZE_LIBS="bzip2 brotli libdeflate expat libffi pcre2 glib fontconfig uchardet libiconv
   libudfread libbluray libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint"
-opt_level() { [[ " $(echo $SIZE_LIBS) " == *" $1 "* ]] && echo s || echo 2; }
+opt_level() { [ -n "${MEDIAHRO_ALL_O2:-}" ] && { echo 2; return; }; [[ " $(echo $SIZE_LIBS) " == *" $1 "* ]] && echo s || echo 2; }
 
 STEP=""; STEP_ARGS=()
 should_build() {  # skip when the stamp matches (source hash + recipe args), unless ONLY names it
@@ -322,7 +330,10 @@ recipes() {
   if should_build libvpx --target="$VPX_TARGET" --enable-pic --disable-shared --enable-static --disable-examples \
        --disable-tools --disable-docs --disable-unit-tests --enable-vp9-highbitdepth --disable-runtime-cpu-detect "${vpx_as[@]}"; then
     local b="$BUILD/libvpx"; rm -rf "$b"; mkdir -p "$b"
-    (cd "$b" && CROSS="" CFLAGS="-O2 $HARDEN" CXXFLAGS="-O2 $HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="$vpx_asm" \
+    # No LTO for libvpx: its install strips the static archive, which llvm-strip cannot do to LTO bitcode;
+    # it is mostly assembly and is linked statically into libavcodec anyway.
+    (cd "$b" && CROSS="" CFLAGS="-O2 ${HARDEN//-flto=thin/}" CXXFLAGS="-O2 ${HARDEN//-flto=thin/}" \
+       LDFLAGS="${LDHARDEN//-flto=thin/}" LD="$CC" AS="$vpx_asm" \
        "$SRC/libvpx/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" "${STEP_ARGS[@]}")
     make -C "$b" -j "$JOBS"
     make -C "$b" install
