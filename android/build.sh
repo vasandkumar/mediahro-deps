@@ -243,13 +243,19 @@ autotools_build() {  # autotools_build <name> [configure options...]  (in a copy
   local opts=(--host="$HOST" --prefix="$PREFIX" --libdir="$PREFIX/lib" --enable-shared --disable-static --with-pic "$@")
   should_build "$name" "${opts[@]}" || return 0
   local b="$BUILD/$name"; rm -rf "$b"; cp -a "$SRC/$name" "$b"
-  (cd "$b" && CFLAGS="-O$(opt_level "$name") $HARDEN" CXXFLAGS="-O$(opt_level "$name") $HARDEN" CPPFLAGS="-I$PREFIX/include" \
+  # -MD: every compile leaves a depfile for source_scan.py, also in hand-written Makefiles (libiconv).
+  (cd "$b" && CFLAGS="-O$(opt_level "$name") $HARDEN -MD" CXXFLAGS="-O$(opt_level "$name") $HARDEN -MD" CPPFLAGS="-I$PREFIX/include" \
      LDFLAGS="$LDHARDEN -L$PREFIX/lib" LIBS="$("$CC" -print-libgcc-file-name)" ./configure "${opts[@]}")
   # libtool links C++ libraries with -nostdlib: the compiler-rt builtins (LIBS above) keep
   # outline atomics and other helpers inside the library instead of leaving them undefined.
   unversion_libtool "$b"
-  make -C "$b" -j "$JOBS"
-  make -C "$b" install
+  # AUTOTOOLS_SUBDIRS limits the build to library directories (libiconv: not its GPL `iconv` program).
+  local d
+  for d in ${AUTOTOOLS_SUBDIRS:-.}; do
+    make -C "$b/$d" -j "$JOBS"
+    make -C "$b/$d" install
+  done
+  [ -z "${AUTOTOOLS_POST:-}" ] || (cd "$b" && eval "$AUTOTOOLS_POST")
   finish "$name" "$b"
 }
 
@@ -280,6 +286,9 @@ recipes() {
   cmake_build brotli -DBROTLI_BUILD_TOOLS=OFF -DBUILD_TESTING=OFF -DBROTLI_DISABLE_TESTS=ON
   cmake_build libdeflate -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_SHARED_LIB=ON -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF
   cmake_build expat -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF -DEXPAT_BUILD_FUZZERS=OFF -DEXPAT_SHARED_LIBS=ON
+  # SUB-013: bionic's iconv only converts UTF-8/16/32, ASCII and Latin-1. GNU libiconv (LGPL, shared) gives mpv and
+  # FFmpeg cp1251, Shift-JIS, GBK, Big5, EUC-KR and the rest. FFmpeg's configure falls back to -liconv by itself.
+  AUTOTOOLS_SUBDIRS="libcharset lib" AUTOTOOLS_POST='install -m644 include/iconv.h.inst "$PREFIX/include/iconv.h"'     autotools_build libiconv --disable-nls --enable-extra-encodings
   autotools_build libffi --disable-docs --disable-multi-os-directory --disable-exec-static-tramp
   cmake_build pcre2 -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_JIT=OFF -DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=OFF -DPCRE2_BUILD_PCRE2_32=OFF -DPCRE2_STATIC_PIC=ON
   # glib takes its libintl shim as a meson subproject (bionic has no gettext).
@@ -386,6 +395,9 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   # FFmpeg
   mapfile -t FF_FLAGS < <(flags ffmpeg.common.flags; flags ffmpeg.android.flags)
   local ff_x86=(); [ "$ABI" = x86_64 ] && ff_x86=(--x86asmexe=nasm)
+  # GNU libiconv (SUB-013): FFmpeg's configure check links without -liconv, which left libavcodec with
+  # undefined libiconv_* symbols and no DT_NEEDED; link it explicitly.
+  ff_x86+=(--extra-libs=-liconv)
   [ "$ABI" = armeabi-v7a ] && ff_x86=(--enable-neon --enable-thumb)
   if should_build ffmpeg "${FF_FLAGS[@]}" --arch="$FF_ARCH" --cpu="$FF_CPU" "${ff_x86[@]}"; then
     local b="$BUILD/ffmpeg"; rm -rf "$b"; mkdir -p "$b"
@@ -409,7 +421,8 @@ print(*out.values())' "${PL_FLAGS[@]}"))
 
   # mpv (libmpv only)
   mapfile -t MPV_FLAGS < <(flags mpv.flags; flags mpv.android.flags)
-  meson_build mpv "${MPV_FLAGS[@]}"
+  # meson's iconv dependency would take bionic's: point mpv at GNU libiconv (header + -liconv) for SUB-013.
+  meson_build mpv "${MPV_FLAGS[@]}" -Dc_args="$HARDEN $VKINC -I$PREFIX/include"     -Dc_link_args="$LDHARDEN -L$PREFIX/lib -liconv"
 
 
   # Sources and archives (TLS: none on Android, I/O reaches curl through the app's stream callbacks)
@@ -522,6 +535,7 @@ PY
   done
   { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; head -c 200000 "$NDK/NOTICE" 2>/dev/null || true; } > "$st/licenses/libc++.txt"
   check_elf "$st/lib"
+  python3 "$ROOT/scripts/elf_symbols.py" "$st/lib" "$TOOLCHAIN/sysroot/usr/lib/$HOST/$API" "$NM" "$READELF"
   local gpl
   gpl="$(python3 - "$st/build-info" <<'PY'
 import json, pathlib, sys
