@@ -3,3 +3,5 @@
 -Dios-gl=enabled
 -Dcocoa=disabled
 -Dswift-build=disabled
+# ao_avfoundation uses macOS-only CoreAudio HAL types; ao_audiounit is the iOS output.
+-Davfoundation=disabled

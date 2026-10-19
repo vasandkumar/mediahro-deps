@@ -12,3 +12,4 @@
 -Dmacos-cocoa-cb=disabled
 -Dmacos-media-player=disabled
 -Dmacos-touchbar=disabled
+-Davfoundation=enabled

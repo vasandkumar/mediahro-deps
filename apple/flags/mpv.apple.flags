@@ -9,7 +9,6 @@
 -Duchardet=enabled
 -Dlibbluray=enabled
 -Dvector=enabled
--Davfoundation=enabled
 -Dvideotoolbox-pl=enabled
 -Dgl=enabled
 -Dplain-gl=enabled
