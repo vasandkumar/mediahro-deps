@@ -125,27 +125,24 @@ make_slice_frameworks() {
 
 # Every load command must point at the OS or at one of our frameworks.
 check_slice_frameworks() {
-  local out=$1 bin bad=0 dep
-  for bin in "$out"/*.framework/*; do
-    [ -f "$bin" ] && [ ! -L "$bin" ] || continue
-    case $bin in *.plist) continue ;; esac
-    in_list "$ARCH" $(lipo -archs "$bin") || { echo "wrong arch in $bin: $(lipo -archs "$bin")" >&2; bad=1; }
+  local out=$1 fw stem bin bad=0 dep
+  for fw in "$out"/*.framework; do
+    stem=$(basename "$fw" .framework)
+    bin="$fw/$(fw_binary_rel "$OS" "$stem")"
+    [ -f "$bin" ] || { echo "missing binary $bin" >&2; bad=1; continue; }
+    in_list "$ARCH" $(lipo -archs "$bin") || { echo "wrong arch in $stem: $(lipo -archs "$bin")" >&2; bad=1; }
     while read -r dep; do
       case $dep in
         /usr/lib/* | /System/Library/* | @rpath/*.framework/*) ;;
-        *) echo "bad load command in ${bin#"$out"/}: $dep" >&2; bad=1 ;;
+        *) echo "bad load command in $stem: $dep" >&2; bad=1 ;;
       esac
     done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
+    # otool's first line is the file name itself (inside $WORK): skip it.
     if otool -l "$bin" | tail -n +2 | grep -F "$WORK" >/dev/null; then
-      echo "build path leaked into ${bin#"$out"/}:" >&2
+      echo "build path leaked into $stem:" >&2
       otool -l "$bin" | tail -n +2 | grep -n -B4 -F "$WORK" >&2 || true
       bad=1
     fi
-  done
-  for bin in "$out"/*.framework/Versions/A/*; do
-    [ -f "$bin" ] || continue
-    dep=$(otool -L "$bin" | tail -n +2 | awk '{print $1}' | grep -v -e '^/usr/lib/' -e '^/System/' -e '^@rpath/.*\.framework/' || true)
-    [ -z "$dep" ] || { echo "bad load commands in $bin: $dep" >&2; bad=1; }
   done
   [ "$bad" = 0 ] || die "framework checks failed for $SLICE"
 }
