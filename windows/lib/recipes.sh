@@ -207,19 +207,12 @@ r_ffmpeg() {
   if [ "$ARCH" = arm64 ]; then
     # Table generators run on the x64 build machine: x64 CRT/SDK libraries
     # ahead of vcvars' arm64 LIB, and an x64 image.
-    # make hands these to sh unquoted, so no "Program Files (x86)": 8.3 names.
-    local vclib ucrt um p
-    vclib=$(cygpath -m "$(cygpath -d "${VCToolsInstallDir}lib\\x64")")
-    ucrt=$(cygpath -m "$(cygpath -d "${WindowsSdkDir}Lib\\${WindowsSDKVersion}ucrt\\x64")")
-    um=$(cygpath -m "$(cygpath -d "${WindowsSdkDir}Lib\\${WindowsSDKVersion}um\\x64")")
-    for p in "$vclib" "$ucrt" "$um"; do
-      case $p in *[\ \(\)]*) echo "no 8.3 short name for $p (enable 8dot3 names on that volume)"; return 1 ;; esac
-    done
+    local lp; lp=$(x64_libpaths) || { echo "$lp"; return 1; }
     # Assemble the GNU-syntax .S files with clang-cl's integrated assembler;
     # armasm64 behind gas-preprocessor would be handed every C flag.
     cross=(--enable-cross-compile --as="$cc")
     host=(--host-cc="clang-cl -target x86_64-pc-windows-msvc" --host-ld="$s/compat/windows/mslink"
-          --host-ldflags="-MACHINE:X64 -LIBPATH:$vclib -LIBPATH:$ucrt -LIBPATH:$um")
+          --host-ldflags="-MACHINE:X64 $lp")
   fi
   # Host tools (table generators) link with MSVC link.exe like the libraries;
   # clang-cl from the LLVM release would otherwise drive lld-link.

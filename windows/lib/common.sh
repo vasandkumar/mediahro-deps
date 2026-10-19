@@ -103,6 +103,20 @@ load_msvc_env() {
 
 # ------------------------------------------------------------ toolchains
 
+# x64_libpaths: -LIBPATH flags for the x64 CRT and SDK libraries (build-machine
+# tools in an arm64 cross build). 8.3 names, because make and meson pass link
+# flags through sh unquoted and these live under "Program Files (x86)".
+x64_libpaths() {
+  local d p out=""
+  for d in "${VCToolsInstallDir}lib\\x64" "${WindowsSdkDir}Lib\\${WindowsSDKVersion}ucrt\\x64" \
+           "${WindowsSdkDir}Lib\\${WindowsSDKVersion}um\\x64"; do
+    p=$(cygpath -m "$(cygpath -d "$d")")
+    case $p in *[\ \(\)]*|"") echo "no 8.3 short name for $d (enable 8dot3 names on that volume)"; return 1 ;; esac
+    out="$out -LIBPATH:$p"
+  done
+  echo "${out# }"
+}
+
 write_toolchains() {
   local arch=$1 cflags ldflags
   case $arch in
@@ -176,8 +190,28 @@ cpu = '$MESON_CPU'
 endian = 'little'
 EOF
     MESON_MACHINE="--cross-file=$(w "$T/meson.ini")"
+    # Build-machine (x64) compiler for generators some projects run while
+    # building (fribidi's gen.tab, ...): x64 CRT/SDK libraries ahead of the
+    # arm64 LIB from vcvars.
+    local lp; lp=$(x64_libpaths) || die "$lp"
+    cat > "$T/meson-build-machine.ini" <<EOF
+[binaries]
+c = ['$CC_W', '/clang:--target=x86_64-pc-windows-msvc']
+cpp = ['$CC_W', '/clang:--target=x86_64-pc-windows-msvc']
+c_ld = 'link'
+cpp_ld = 'link'
+ar = '$LIB_W'
+pkg-config = '$PKGCONF_W'
+
+[built-in options]
+c_link_args = ['-MACHINE:X64', $(for p in $lp; do printf "'%s', " "$p"; done)'-NOLOGO']
+cpp_link_args = ['-MACHINE:X64', $(for p in $lp; do printf "'%s', " "$p"; done)'-NOLOGO']
+b_vscrt = 'md'
+EOF
+    MESON_BUILD_MACHINE="--native-file=$(w "$T/meson-build-machine.ini")"
   else
     MESON_MACHINE="--native-file=$(w "$T/meson.ini")"
+    MESON_BUILD_MACHINE=
   fi
 
   {
@@ -258,6 +292,7 @@ cmake_build() {  # SRC BUILD [cmake args...]
 # flags through a second machine file; -Dc_link_args would replace them.
 meson_build() {  # SRC BUILD [meson args...]
   local s=$1 b=$2 machine=("$MESON_MACHINE") f extra=""; shift 2
+  [ -n "${MESON_BUILD_MACHINE:-}" ] && machine+=("$MESON_BUILD_MACHINE")
   rm -rf "$b"
   if [ -n "${MESON_EXTRA_LDFLAGS:-}${MESON_EXTRA_CFLAGS:-}" ]; then
     local cextra=""
