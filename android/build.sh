@@ -139,7 +139,7 @@ should_build() {  # skip when the stamp matches (source hash + recipe args), unl
   STEP="$name"; STEP_ARGS=("$@")
   [[ " ${SKIP:-} " == *" $name "* ]] && return 1
   local stamp="$WORK/$ABI/stamps/$name" key
-  key="$(cat "$SRC/$name/.mediahro-sha256" 2>/dev/null || echo local)|$(printf '%s\n' "$@" | sha256sum | cut -c1-16)|$(sha256sum "$ROOT/android/build.sh" | cut -c1-16)"
+  key="$(cat "$SRC/$name/.mediahro-sha256" 2>/dev/null || echo local)|$(printf '%s\n' "$@" | sha256sum | cut -c1-16)"
   if [ -n "${ONLY:-}" ]; then
     [[ " $ONLY " == *" $name "* ]] || { [ -f "$stamp" ] && return 1; }
   elif [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$key" ]; then
