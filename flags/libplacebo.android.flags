@@ -1,3 +1,6 @@
+# Android: glslang (static, no optimiser) instead of shaderc — install size (docs/11 §5).
+-Dglslang=enabled
+-Dshaderc=disabled
 -Dopengl=enabled
 -Dvk-proc-addr=enabled
 -Dd3d11=disabled

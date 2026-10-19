@@ -30,6 +30,9 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
   (`-mbranch-protection=standard`), CET on x86_64 (`-fcf-protection=full`). Clang's software CFI
   (`-fsanitize=cfi`) is not used: it needs LTO across one DSO and does not cover calls between the
   shared libraries that make up this archive. armeabi-v7a has no hardware CFI.
+- **Size**: FFmpeg starts from `--disable-everything` and enables only the docs/04 components listed in
+  `flags/ffmpeg.common.flags` (a misspelt name fails the build); `-ffunction-sections -fdata-sections` +
+  `--gc-sections` everywhere; `-Os` for libraries off the hot path (`SIZE_LIBS`), `-O2` for codecs and renderers.
 - **C++**: `libc++_shared.so` from the NDK is in the archive (the NDK's recommendation when several
   shared libraries use C++).
 
@@ -46,6 +49,11 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
 - `libssh2`: Windows only (WinCNG). On Android SFTP uses sshj over JCA behind `SftpFacade`; FTPS runs over
   `TlsSocketFacade` (SSLSocket), so curl has no TLS backend here.
 - `openscreen-libcast`: removed everywhere; the Dart CASTv2 sender over OS TLS sockets replaces it.
+- Install size (docs/11 §5, `not_built_by_design` in versions.json): `shaderc`, `spirv-tools`, `spirv-headers`
+  (libplacebo links a static glslang without its optimiser instead), `vvdec` (mpv decodes VVC with FFmpeg's native
+  decoder), `flac` / `libogg` (FFmpeg decodes FLAC and Ogg), `cgif` (libvips has no permissive quantiser; GIF export
+  uses FFmpeg). Installed by their build systems but neither linked nor loaded through FFI, so not staged:
+  SPIRV-Tools-shared, girepository, gthread, pcre2-posix, parakeet, raw_r, webpdecoder (`DROP_LIBS`).
 - `moltenvk`, `zlib` (OS zlib), `vulkan-loader`, `spirv-cross`: not Android libraries.
 
 ## Runtime notes for the engine (B1)

@@ -1,4 +1,6 @@
 # libvips 8.18 (LGPL, dynamic). OS decoders handle HEIC; no libheif on Windows (docs/05 §5, §10).
+# ImagePipeline (docs/05 §5) routes JPEG, PNG, WebP, TIFF, GIF and EXR to libvips; JPEG XL, AVIF and RAW go to
+# libjxl / libavif / LibRaw directly and HEIC to the OS. Install size (docs/11 §5): nothing else is built in.
 # libimagequant is GPL-3 and stays off; GIF save needs a permissive quantiser (quantizr), see versions.json cgif note.
 -Dheif=disabled
 -Dheif-module=disabled
@@ -17,9 +19,9 @@
 -Duhdr=disabled
 -Dpangocairo=disabled
 -Dfontconfig=disabled
--Dcgif=enabled
+-Dcgif=disabled
 -Djpeg=enabled
--Djpeg-xl=enabled
+-Djpeg-xl=disabled
 -Djpeg-xl-module=disabled
 -Dspng=enabled
 -Dpng=disabled
@@ -28,9 +30,9 @@
 -Dexif=enabled
 -Dlcms=enabled
 -Dopenexr=enabled
--Draw=enabled
+-Draw=disabled
 -Dhighway=enabled
--Darchive=enabled
+-Darchive=disabled
 -Dzlib=enabled
 -Dmodules=disabled
 -Dintrospection=disabled
@@ -41,3 +43,7 @@
 -Ddocs=false
 -Dcpp-docs=false
 -Ddefault_library=shared
+-Dppm=false
+-Danalyze=false
+-Dradiance=false
+-Dnsgif=true
