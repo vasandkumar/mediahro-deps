@@ -304,11 +304,12 @@ recipes() {
   # Codecs
   cmake_build libjpeg-turbo -DENABLE_STATIC=OFF -DENABLE_SHARED=ON -DWITH_TURBOJPEG=ON -DWITH_JAVA=OFF -DWITH_TOOLS=OFF -DWITH_TESTS=OFF
   meson_build dav1d -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false -Denable_asm=true
-  local vpx_as=(); [ "$ABI" = x86_64 ] && vpx_as=(--as=nasm)
+  # libvpx assembles with nasm on x86_64 and with the NDK clang on ARM (not the host's GNU as).
+  local vpx_as=() vpx_asm="$CC -c"; [ "$ABI" = x86_64 ] && { vpx_as=(--as=nasm); vpx_asm=nasm; }
   if should_build libvpx --target="$VPX_TARGET" --enable-pic --disable-shared --enable-static --disable-examples \
        --disable-tools --disable-docs --disable-unit-tests --enable-vp9-highbitdepth --disable-runtime-cpu-detect "${vpx_as[@]}"; then
     local b="$BUILD/libvpx"; rm -rf "$b"; mkdir -p "$b"
-    (cd "$b" && CROSS="" CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="${vpx_as:+nasm}" \
+    (cd "$b" && CROSS="" CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="$vpx_asm" \
        "$SRC/libvpx/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" "${STEP_ARGS[@]}")
     make -C "$b" -j "$JOBS"
     make -C "$b" install
