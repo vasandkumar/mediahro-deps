@@ -1,4 +1,8 @@
 --target-os=android
+--enable-cross-compile
 --enable-jni
 --enable-mediacodec
---enable-cross-compile
+--enable-zlib
+--enable-bzlib
+--enable-lzma
+--enable-iconv

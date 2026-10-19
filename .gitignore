@@ -3,3 +3,5 @@ build/
 dist/
 src/
 *.tar.*
+__pycache__/
+*.pyc

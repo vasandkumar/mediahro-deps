@@ -1,44 +1,200 @@
 name: build
+# Builds the native dependency archives (README.md "Targets") on workflow_dispatch
+# and on tags, and publishes tags as GitHub Releases with the archives,
+# their .sha256 files and SHA256SUMS for Mediahro's deps.lock.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated: android, apple, windows)'
+        default: 'android,apple,windows'
+        type: string
+      pin:
+        description: 'Compute missing source SHA-256s (scripts/sources.py pin) and upload versions.json'
+        default: false
+        type: boolean
 permissions:
   contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   verify:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: python3 scripts/verify_flags.py
-  build:
+      - name: Licence-safe flags, banned libraries, LGPL linking
+        run: python3 scripts/verify_flags.py
+      - name: Scripts compile, versions.json is pinned and well-formed
+        run: |
+          python3 -m py_compile scripts/*.py
+          bash -n android/build.sh
+          python3 - <<'PY'
+          import json, re
+          data = json.load(open("versions.json"))
+          missing = [l["name"] for l in data["libraries"]
+                     if l.get("verify") != "git" and not re.fullmatch(r"[0-9a-f]{64}", l.get("sha256") or "")]
+          sigs = [l["name"] for l in data["libraries"] if l.get("signature") and not l["signature"].get("fingerprint")]
+          print("unpinned:", missing or "none")
+          print("signatures without fingerprint:", sigs or "none")
+          PY
+
+  pin:
+    # Hosts unreachable from some networks (e.g. videolan.org) are pinned here.
     needs: verify
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.pin
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pin missing SHA-256 values (verified against upstream digests and signatures)
+        env: { GITHUB_TOKEN: '${{ github.token }}' }
+        run: python3 scripts/sources.py pin --fetch-keys --cache "$RUNNER_TEMP/dl" || true
+      - run: git diff -- versions.json keys/ && git status --short
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pinned-versions
+          path: |
+            versions.json
+            keys/
+
+  plan:
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && !inputs.pin)
+    runs-on: ubuntu-24.04
+    outputs:
+      android: ${{ steps.p.outputs.android }}
+      apple: ${{ steps.p.outputs.apple }}
+      windows: ${{ steps.p.outputs.windows }}
+    steps:
+      - id: p
+        env: { PLATFORMS: "${{ inputs.platforms || 'android,apple,windows' }}" }
+        run: for p in android apple windows; do [[ ",${PLATFORMS// /}," == *",$p,"* ]] && echo "$p=true" >> "$GITHUB_OUTPUT" || echo "$p=false" >> "$GITHUB_OUTPUT"; done
+
+  sources:
+    # The exact upstream sources of every build (LGPL source offer, docs/09 §2): published with the release.
+    needs: plan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch and verify every pinned source
+        run: python3 scripts/sources.py fetch --dest "$RUNNER_TEMP/src" --cache "$RUNNER_TEMP/sources" --skip openscreen-libcast
+      - name: Source bundle
+        run: |
+          mkdir -p dist
+          cp versions.json "$RUNNER_TEMP/sources/" && cp -r keys patches "$RUNNER_TEMP/sources/"
+          name="mediahro-deps-sources.tar"
+          tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@1767225600 -C "$RUNNER_TEMP" -cf "dist/$name" sources
+          (cd dist && sha256sum "$name" > "$name.sha256" && cat "$name.sha256")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: deps-sources, path: dist/, if-no-files-found: error }
+
+  android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { platform: android, runner: ubuntu-24.04 }
-          - { platform: apple, runner: macos-26 }
-          - { platform: windows, runner: windows-2025 }
-    runs-on: ${{ matrix.runner }}
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      MEDIAHRO_WORK: ${{ github.workspace }}/build/android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Host tools (distribution packages; meson from PyPI by hash)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nasm ninja-build autoconf automake libtool pkg-config gperf \
+            python3-jinja2 python3-venv patch gnupg
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --require-hashes --no-deps -r android/requirements-build.txt
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+      - name: Android NDK (pinned in versions.json)
+        run: |
+          rev="$(python3 -c 'import json;print(json.load(open("versions.json"))["toolchains"]["android-ndk"]["revision"])')"
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          [ -d "$sdk/ndk/$rev" ] || yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$rev" > /dev/null
+          echo "ANDROID_NDK_HOME=$sdk/ndk/$rev" >> "$GITHUB_ENV"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/android/downloads
+          key: sources-${{ hashFiles('versions.json') }}
+          restore-keys: sources-
+      - name: Build ${{ matrix.abi }}
+        run: android/build.sh dist ${{ matrix.abi }}
+      - name: Build logs on failure
+        if: failure()
+        run: find build/android -path '*/meson-logs/meson-log.txt' -newer versions.json -exec tail -n 80 {} + || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: 'deps-android-${{ matrix.abi }}', path: dist/, if-no-files-found: error }
+
+  apple:
+    needs: plan
+    if: needs.plan.outputs.apple == 'true'
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build (lane B4b)
+        run: |
+          [ -x apple/build.sh ] || { echo "::error::apple/build.sh is not on this ref yet (lane B4b)"; exit 1; }
+          apple/build.sh dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: deps-apple, path: dist/, if-no-files-found: error }
+
+  windows:
+    needs: plan
+    if: needs.plan.outputs.windows == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 300
     defaults:
       run: { shell: bash }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: ${{ matrix.platform }}/build.sh dist
+      - name: Build (lane B4c)
+        run: |
+          [ -f windows/build.sh ] || { echo "::error::windows/build.sh is not on this ref yet (lane B4c)"; exit 1; }
+          bash windows/build.sh dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: 'deps-${{ matrix.platform }}', path: dist/ }
+        with: { name: deps-windows, path: dist/, if-no-files-found: error }
+
   release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publishes every platform that built. A tag with a pre-release suffix (v…-…) or a
+    # missing platform becomes a GitHub pre-release; the notes list what is missing.
+    needs: [sources, android, apple, windows]
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/v') && needs.sources.result == 'success' &&
+      (needs.android.result == 'success' || needs.apple.result == 'success' || needs.windows.result == 'success')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { path: dist, merge-multiple: true }
-      - run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --notes "Archives and SHA-256 for deps.lock"
-        env: { GH_TOKEN: '${{ github.token }}' }
+        with: { path: dist, pattern: 'deps-*', merge-multiple: true }
+      - name: Verify archives against their .sha256 files
+        working-directory: dist
+        run: |
+          ls -l
+          for s in *.sha256; do sha256sum -c "$s"; done
+          cat *.sha256 > SHA256SUMS
+      - name: Publish ${{ github.ref_name }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: android=${{ needs.android.result }} apple=${{ needs.apple.result }} windows=${{ needs.windows.result }}
+        run: |
+          missing=""; for r in $RESULTS; do [ "${r#*=}" = success ] || missing="$missing ${r%%=*}"; done
+          pre=""; { [[ "$GITHUB_REF_NAME" == *-* ]] || [ -n "$missing" ]; } && pre="--prerelease"
+          {
+            echo "Native dependency archives for Mediahro (pin in deps.lock)."
+            echo
+            echo "Built from ${GITHUB_SHA}. Every archive carries manifest.json (licence, linking, configure line, source URL and SHA-256, GPL source scan) and licenses/."
+            echo "mediahro-deps-sources.tar holds the exact upstream sources of this build (source offer for the LGPL libraries)."
+            [ -z "$missing" ] || { echo; echo "Not in this release:$missing"; }
+            echo; echo '```'; cat dist/SHA256SUMS; echo '```'
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tar dist/*.sha256 dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md $pre
