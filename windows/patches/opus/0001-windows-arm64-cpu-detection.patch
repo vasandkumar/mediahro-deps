@@ -1,0 +1,28 @@
+--- a/celt/arm/armcpu.c
++++ b/celt/arm/armcpu.c
+@@ -45,7 +45,24 @@
+ #define OPUS_CPU_ARM_NEON_FLAG  (1<<OPUS_ARCH_ARM_NEON)
+ #define OPUS_CPU_ARM_DOTPROD_FLAG  (1<<OPUS_ARCH_ARM_DOTPROD)
+
+-#if defined(_MSC_VER)
++#if defined(_MSC_VER) && (defined(_M_ARM64) || defined(_M_ARM64EC))
++/* mediahro-deps: Windows on Arm64. The probes below emit ARM32 opcodes; on
++ * AArch64 EDSP, MEDIA and NEON are architectural and the OS reports dotprod. */
++# define WIN32_LEAN_AND_MEAN
++# define WIN32_EXTRA_LEAN
++# include <windows.h>
++
++static OPUS_INLINE opus_uint32 opus_cpu_capabilities(void){
++  opus_uint32 flags;
++  flags=OPUS_CPU_ARM_EDSP_FLAG|OPUS_CPU_ARM_MEDIA_FLAG|OPUS_CPU_ARM_NEON_FLAG;
++# if defined(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)
++  if(IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE))
++    flags|=OPUS_CPU_ARM_DOTPROD_FLAG;
++# endif
++  return flags;
++}
++
++#elif defined(_MSC_VER)
+ /*For GetExceptionCode() and EXCEPTION_ILLEGAL_INSTRUCTION.*/
+ # define WIN32_LEAN_AND_MEAN
+ # define WIN32_EXTRA_LEAN

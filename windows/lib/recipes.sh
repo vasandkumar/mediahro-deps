@@ -127,10 +127,10 @@ r_libogg() {
 
 r_opus() {
   local s neon=(); s=$(fetch opus)
-  # NEON is architectural on arm64. Opus only presumes it when the processor
-  # is spelled "aarch64" (CMake says ARM64 here); otherwise it compiles ARM32
-  # runtime probes (__emit of ARM32 opcodes) that clang-cl rejects.
-  [ "$ARCH" = arm64 ] && neon=(-DOPUS_PRESUME_NEON=ON -DOPUS_MAY_HAVE_NEON=OFF)
+  # NEON is architectural on arm64; opus only presumes it when the processor
+  # is spelled "aarch64" (CMake says ARM64 here). patches/opus replaces the
+  # ARM32 runtime probes for Windows on Arm64.
+  [ "$ARCH" = arm64 ] && neon=(-DOPUS_PRESUME_NEON=ON)
   cmake_build "$s" "$B" "${neon[@]}" -DOPUS_BUILD_SHARED_LIBRARY=ON -DOPUS_BUILD_TESTING=OFF -DOPUS_BUILD_PROGRAMS=OFF \
     -DOPUS_INSTALL_PKG_CONFIG_MODULE=ON -DOPUS_INSTALL_CMAKE_CONFIG_MODULE=ON -DOPUS_STATIC_RUNTIME=OFF
   license opus "$s/COPYING"
