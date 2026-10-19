@@ -25,7 +25,7 @@ manifest.json               written by scripts/package.py (licence scan input)
 
 Every library in `versions.json` that applies to Apple, plus expat (libvips) and proxy-libintl (glib's gettext stub), except the two in `blocked.json` (below). zlib, bzip2, libxml2 and libiconv come from the Apple SDK. Sources are fetched by `../scripts/sources.py`, which checks the SHA-256 (and the OpenPGP signature where upstream signs) before extracting.
 
-Components compiled into another library get their own `build-info/` entry with `compiled_into`: glslang, SPIRV-Tools and SPIRV-Headers (into `libshaderc_shared`), SPIRV-Cross (into `libMoltenVK`), fast_float and glad (libplacebo), Vulkan-Headers (headers). MoltenVK's header-only cereal is fetched by MoltenVK's CMake (CPM) at the git commit in its `ExternalRevisions` (its licence is appended to `licenses/moltenvk.txt`); SPIRV-Tools is left out of MoltenVK (debug disassembly only). OpenEXR compiles its vendored OpenJPH into OpenEXRCore.
+Components compiled into another library get their own `build-info/` entry with `compiled_into`: glslang, SPIRV-Tools and SPIRV-Headers (into `libshaderc_shared`), SPIRV-Cross and cereal (into `libMoltenVK`; MoltenVK's CMake is pointed at the pinned trees, so it clones nothing), fast_float and glad (libplacebo), Vulkan-Headers (headers). SPIRV-Tools is left out of MoltenVK (debug disassembly only). OpenEXR compiles its vendored OpenJPH into OpenEXRCore.
 
 Each library's `build-info/<name>.json` records the real configure options and the result of `../scripts/source_scan.py` over every slice; `package.py` turns them into `manifest.json` and the build fails if any GPL-only source was compiled.
 

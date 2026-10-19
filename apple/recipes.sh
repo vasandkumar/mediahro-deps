@@ -439,7 +439,9 @@ build_vulkan-headers() {
 }
 
 build_moltenvk() {
-  local s sc ver; s=$(src moltenvk); sc=$(src spirv-cross)
+  local s sc cr ver; s=$(src moltenvk); sc=$(src spirv-cross); cr=$(src cereal)
+  [ "$(cat "$s/ExternalRevisions/cereal_repo_revision")" = "$(pin_commit cereal)" ] \
+    || die "cereal pin differs from MoltenVK's ExternalRevisions"
   if [ "$OS" = ios ]; then
     # MoltenVK's CMake build links the macOS frameworks unconditionally; on iOS
     # the platform UI framework is UIKit, IOKit is not used and CoreGraphics
@@ -448,16 +450,17 @@ build_moltenvk() {
     if grep -q -e AppKit -e 'IOKit REQUIRED' "$s/Common/CMakeLists.txt"; then die "MoltenVK: iOS framework patch did not apply"; fi
   fi
   ver=$(sed -n 's/^#define VK_HEADER_VERSION \([0-9]*\).*/\1/p' "$PREFIX/include/vulkan/vulkan_core.h")
-  # Vulkan-Headers and SPIRV-Cross are the verified versions.json pins (CPM uses
-  # them instead of cloning). SPIRV-Tools only adds debug disassembly: left out.
-  # cereal (pipeline-cache serialisation, header-only) is still fetched by CPM
-  # at the git commit in MoltenVK's ExternalRevisions.
+  # Vulkan-Headers, SPIRV-Cross and cereal are the verified versions.json pins
+  # (CPM uses them instead of cloning anything). SPIRV-Tools only adds debug
+  # disassembly: left out.
   cmake_build moltenvk "$s" -DCPM_SOURCE_CACHE="$CACHE/cpm" -DCPM_Vulkan-Headers_SOURCE="$(vk_headers_dir)" \
-    -DCPM_SPIRV-Cross_SOURCE="$sc" -DMVK_EXCLUDE_SPIRV_TOOLS=ON \
+    -DCPM_SPIRV-Cross_SOURCE="$sc" -DCPM_cereal_SOURCE="$cr" -DMVK_EXCLUDE_SPIRV_TOOLS=ON \
     -DMVK_USE_METAL_PRIVATE_API=OFF -DMVK_BUILD_SHADER_CONVERTER_TOOL=OFF -DMVK_CONFIG_LOG_LEVEL=warn \
     -DMOLTEN_VK_WITH_CCACHE=OFF
   scan_into spirv-cross "$sc" "$BUILD/moltenvk" 'libMoltenVK*.dylib'
+  scan_into cereal "$cr" "$BUILD/moltenvk" 'libMoltenVK*.dylib'
   license spirv-cross "$sc/LICENSE"
+  license cereal "$cr/LICENSE"
   cat >"$PREFIX/lib/pkgconfig/vulkan.pc" <<EOF
 prefix=$PREFIX
 includedir=\${prefix}/include
@@ -470,12 +473,6 @@ Libs: -L\${libdir} -lMoltenVK
 Cflags: -I\${includedir}
 EOF
   license moltenvk "$s/LICENSE"
-  local cereal
-  cereal=$(find "$CACHE/cpm" "$BUILD/moltenvk" -name LICENSE -path '*cereal*' -print -quit 2>/dev/null || true)
-  [ -n "$cereal" ] || die "MoltenVK: cereal licence not found in the CPM cache"
-  # Appended to MoltenVK's licence file: cereal is compiled into libMoltenVK.
-  { printf '==> cereal (compiled into libMoltenVK, commit %s) <==\n' "$(cat "$s/ExternalRevisions/cereal_repo_revision")"
-    cat "$cereal"; } >>"$LICENSES/moltenvk.txt"
 }
 
 build_shaderc() {
@@ -593,7 +590,7 @@ build_mpv() {
   meson_build mpv "$s" "${common[@]}" "${apple[@]}" "${os[@]}" "${extra[@]}"
   local cfg="$BUILD/mpv/config.h"
   require_grep "$cfg" "#define HAVE_GPL 0" "mpv must be the LGPL build"
-  for f in VULKAN LIBPLACEBO VIDEOTOOLBOX_PL; do
+  for f in VULKAN VIDEOTOOLBOX_PL; do
     require_grep "$cfg" "#define HAVE_$f 1" "mpv configure dropped $f"
   done
   license mpv "$s/LICENSE.LGPL" "$s/Copyright"
