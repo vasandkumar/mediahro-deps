@@ -23,7 +23,7 @@ manifest.json               written by scripts/package.py (licence scan input)
 
 ## Libraries
 
-Every library in `versions.json` that applies to Apple, plus expat (libvips) and proxy-libintl (glib's gettext stub), except the two in `blocked.json` (below). zlib, bzip2, libxml2 and libiconv come from the Apple SDK. Sources are fetched by `../scripts/sources.py`, which checks the SHA-256 (and the OpenPGP signature where upstream signs) before extracting.
+Every library in `versions.json` that applies to Apple; the build fails if one has no recipe. zlib, bzip2, libxml2 and libiconv come from the Apple SDK. Sources are fetched by `../scripts/sources.py`, which checks the SHA-256 (and the OpenPGP signature where upstream signs) before extracting.
 
 Components compiled into another library get their own `build-info/` entry with `compiled_into`: glslang, SPIRV-Tools and SPIRV-Headers (into `libshaderc_shared`), SPIRV-Cross and cereal (into `libMoltenVK`; MoltenVK's CMake is pointed at the pinned trees, so it clones nothing), fast_float and glad (libplacebo), Vulkan-Headers (headers). SPIRV-Tools is left out of MoltenVK (debug disassembly only). OpenEXR compiles its vendored OpenJPH into OpenEXRCore.
 
@@ -36,12 +36,9 @@ Each library's `build-info/<name>.json` records the real configure options and t
 - **Hardening:** `-D_FORTIFY_SOURCE=2 -fstack-protector-strong -fPIC -O2` everywhere, `-headerpad_max_install_names`, local symbols stripped. Clang CFI is not available for Apple dylibs (it needs whole-program LTO and does not cross dylib boundaries); arm64e pointer authentication is not used because third-party arm64e is not accepted for distribution. The hardened runtime is applied when the app signs the frameworks. PCRE2 is built without JIT (iOS forbids writable+executable memory).
 - **GPU:** MoltenVK (no private Metal API) provides Vulkan; libplacebo links it directly (`vk-proc-addr`), and mpv is built with Vulkan, libplacebo and VideoToolbox→libplacebo interop. On macOS mpv also has cocoa + Swift for the `macvk` context (gpu-next on a `CAMetalLayer`). mpv's OpenGL / OpenGL ES paths are built too for the libmpv render API.
 
-## Blocked (STATUS.md §3)
+## Not built for Apple (ADR-017)
 
-`blocked.json` lists libraries that cannot be built for Apple without breaking a policy; they are left out of the archive and its manifest until an ADR resolves them:
-
-- **libssh2** — no Apple OS-crypto backend upstream (only OpenSSL, wolfSSL, libgcrypt, mbedTLS, WinCNG, OS400QC3).
-- **openscreen-libcast** — written against BoringSSL (an OpenSSL fork) and Chromium's gclient/GN toolchain.
+Crypto stays with the OS: SFTP on iOS/macOS uses SwiftNIO SSH over CryptoKit and FTPS / the CASTv2 sender run over Network.framework TLS sockets in the app, so libssh2 (Windows-only in `versions.json`) and openscreen-libcast (removed) are not part of the Apple archives, and libcurl has no TLS backend.
 
 ## Development
 

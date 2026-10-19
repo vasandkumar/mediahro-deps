@@ -8,6 +8,9 @@ imath openexr cgif libexif libjxl libavif libraw uchardet libebur128 libudfread 
 libopenmpt libsmb2 libnfs curl libarchive chromaprint whisper.cpp libvips vulkan-headers
 moltenvk shaderc libplacebo ffmpeg mpv"
 
+# Pinned libraries built inside another recipe (their own build-info says where).
+COMPILED_IN="proxy-libintl glslang spirv-tools spirv-headers spirv-cross cereal fast_float glad"
+
 # new_dylibs GLOB : dylibs installed by the current recipe whose name matches GLOB
 new_dylibs() {
   local f out=""

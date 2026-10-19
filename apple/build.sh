@@ -84,22 +84,24 @@ export PATH="$WORK/venv/bin:$PATH"
 
 # --- sources: pinned, hash- and signature-checked by scripts/sources.py ----------
 python3 "$ROOT/scripts/verify_flags.py"
-BLOCKED=$(python3 -c 'import json,sys; print(" ".join(b["name"] for b in json.load(open(sys.argv[1]))["libraries"]))' \
-  "$APPLE/blocked.json")
-# bzip2, zlib, libxml2 and libiconv come from the Apple SDK.
-# shellcheck disable=SC2086
-python3 "$ROOT/scripts/sources.py" fetch --platform apple --dest "$SOURCES" --cache "$CACHE/downloads" \
-  --skip $BLOCKED bzip2 >&2
-# expat (libvips) and proxy-libintl (glib) are pinned for other platforms too; Apple builds them as well.
-python3 "$ROOT/scripts/sources.py" fetch --dest "$SOURCES" --cache "$CACHE/downloads" --only expat proxy-libintl >&2
+# zlib, bzip2, libxml2 and libiconv come from the Apple SDK (versions.json limits them to other platforms).
+python3 "$ROOT/scripts/sources.py" fetch --platform apple --dest "$SOURCES" --cache "$CACHE/downloads" >&2
 VERSIONS_TSV="$WORK/versions.tsv"
 python3 - "$ROOT/versions.json" "$VERSIONS_TSV" <<'PY'
 import json, sys
 libs = json.load(open(sys.argv[1], encoding="utf-8"))["libraries"]
 with open(sys.argv[2], "w") as f:
     for lib in libs:
-        f.write(f"{lib['name']}\t{lib.get('version') or ''}\t{lib.get('commit') or ''}\n")
+        applies = int("platforms" not in lib or "apple" in lib["platforms"])
+        f.write(f"{lib['name']}\t{lib.get('version') or ''}\t{lib.get('commit') or ''}\t{applies}\n")
 PY
+# Every Apple library in versions.json is built by a recipe or compiled into one
+# (never narrow scope silently); recipes for libraries versions.json no longer
+# lists for Apple are skipped.
+APPLE_LIBS=$(awk -F'\t' '$4 == 1 { print $1 }' "$VERSIONS_TSV")
+for lib in $APPLE_LIBS; do
+  in_list "$lib" $RECIPES $COMPILED_IN || die "versions.json lists $lib for Apple but apple/recipes.sh has no recipe for it"
+done
 
 # --- build each slice ----------------------------------------------------------
 declare -A STEM_LIB=()
@@ -113,6 +115,10 @@ for slice in $SLICES; do
   slice_env "$slice"
   for r in $RECIPES; do
     if [ -n "$ONLY" ] && ! in_list "$r" $ONLY; then continue; fi
+    if ! in_list "$r" $APPLE_LIBS; then
+      echo "skipped $r: not listed for Apple in versions.json" >>"$WORK/notes.txt"
+      continue
+    fi
     BEFORE_DYLIBS=$(ls "$PREFIX"/lib/*.dylib 2>/dev/null || true)
     CLAIMED=""
     STEP_ARGS=()
