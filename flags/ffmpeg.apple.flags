@@ -1,3 +1,14 @@
+# FFmpeg configure flags for iOS and macOS (on top of ffmpeg.common.flags).
+# --target-os, --arch, compilers and sysroot are set per slice by apple/build.sh.
+# OS decoders first (docs/09 §4): VideoToolbox / AudioToolbox.
 --enable-videotoolbox
 --enable-audiotoolbox
+# TLS from the OS only (docs/05 §4.1, docs/07 rule 12). macOS: SecureTransport.
+# The iOS SDK lacks the APIs FFmpeg's SecureTransport backend needs, so FFmpeg
+# has no TLS there and HTTPS goes through the app's AVIO over URLSession.
 --enable-securetransport
+# SDK libraries (--disable-autodetect in the common flags turns them off).
+--enable-zlib
+--enable-bzlib
+--enable-iconv
+--enable-libxml2

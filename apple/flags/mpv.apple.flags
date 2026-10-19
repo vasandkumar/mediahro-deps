@@ -1,0 +1,20 @@
+# mpv extras shared by iOS and macOS (on top of ../../flags/mpv.flags).
+# Only the features listed here or in mpv.flags are built; nothing is auto-detected.
+--auto-features=disabled
+-Dbuild-date=false
+-Dtests=false
+-Dfuzzers=false
+-Dcplugins=disabled
+-Diconv=enabled
+-Dzlib=enabled
+-Djpeg=enabled
+-Dlcms2=enabled
+-Duchardet=enabled
+-Dlibbluray=enabled
+-Dvector=enabled
+-Dshaderc=enabled
+-Davfoundation=enabled
+-Dvideotoolbox-pl=enabled
+-Dgl=enabled
+-Dplain-gl=enabled
+-Dvideotoolbox-gl=enabled

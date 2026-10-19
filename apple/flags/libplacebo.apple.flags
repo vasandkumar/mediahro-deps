@@ -1,0 +1,12 @@
+# libplacebo extras for Apple (on top of ../../flags/libplacebo.flags).
+# Vulkan through MoltenVK, linked directly (vk-proc-addr); no OpenGL/D3D11.
+-Dvk-proc-addr=enabled
+-Dopengl=disabled
+-Dd3d11=disabled
+-Ddovi=enabled
+-Dlibdovi=disabled
+-Dunwind=disabled
+-Dxxhash=disabled
+-Dbench=false
+-Dfuzz=false
+-Ddebug-abort=false

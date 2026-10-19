@@ -1,0 +1,5 @@
+# mpv extras for iOS / iOS Simulator.
+-Daudiounit=enabled
+-Dios-gl=enabled
+-Dcocoa=disabled
+-Dswift-build=disabled

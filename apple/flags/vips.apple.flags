@@ -1,0 +1,13 @@
+# libvips extras for Apple (on top of ../../flags/vips.flags).
+# Only the features listed here or in vips.flags are built; nothing is auto-detected.
+--auto-features=disabled
+-Djpeg=enabled
+-Dzlib=enabled
+-Dhighway=enabled
+-Draw=enabled
+-Darchive=enabled
+-Dpng=disabled
+-Dexamples=false
+-Ddocs=false
+-Dcpp-docs=false
+-Dvapi=false

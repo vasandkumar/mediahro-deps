@@ -1,0 +1,14 @@
+# mpv extras for macOS. cocoa + swift provide the macvk context (Vulkan via
+# MoltenVK on a CAMetalLayer, --wid embedding); the app owns windows, menus,
+# media keys and the Touch Bar.
+-Dcoreaudio=enabled
+-Dcocoa=enabled
+-Dswift-build=enabled
+-Dgl-cocoa=enabled
+-Dmacos-10-15-4-features=enabled
+-Dmacos-11-features=enabled
+-Dmacos-11-3-features=enabled
+-Dmacos-12-features=enabled
+-Dmacos-cocoa-cb=disabled
+-Dmacos-media-player=disabled
+-Dmacos-touchbar=disabled
