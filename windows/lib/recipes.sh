@@ -147,7 +147,8 @@ r_libvpx() {
   vs=${VisualStudioVersion%%.*}
   rm -rf "$B"; mkdir -p "$B"; cd "$B"
   export CL="-guard:cf -GS -Gy -Zc:inline"
-  "$s/configure" --target="$VPX_ARCH-win64-vs$vs" --as=nasm --disable-examples --disable-tools --disable-docs \
+  local as=(); [ "$ARCH" = x64 ] && as=(--as=nasm)
+  "$s/configure" --target="$VPX_ARCH-win64-vs$vs" "${as[@]}" --disable-examples --disable-tools --disable-docs \
     --disable-unit-tests --enable-vp8 --enable-vp9 --enable-vp9-highbitdepth --disable-install-bins --disable-install-srcs
   make -j"$JOBS"
   out=$(find "$B" -name vpxmd.lib -path "*Release*" | head -1)
@@ -195,12 +196,20 @@ r_ffmpeg() {
     fi
     args+=("$f")
   done < <(flags_of "$ROOT/flags/ffmpeg.common.flags"; flags_of "$ROOT/flags/ffmpeg.windows.flags")
-  [ "$ARCH" = arm64 ] && cross=(--enable-cross-compile)
   cc="clang-cl -target $CLANG_TARGET"
+  local host=(--host-cc=clang-cl --host-ld="$s/compat/windows/mslink")
+  if [ "$ARCH" = arm64 ]; then
+    # Table generators run on the x64 build machine: x64 CRT/SDK libraries
+    # ahead of vcvars' arm64 LIB, and an x64 image.
+    local sdk; sdk=$(cygpath -m "${WindowsSdkDir}Lib/${WindowsSDKVersion}"); sdk=${sdk%/}
+    cross=(--enable-cross-compile)
+    host=(--host-cc="clang-cl -target x86_64-pc-windows-msvc" --host-ld="$s/compat/windows/mslink"
+          --host-ldflags="-MACHINE:X64 -LIBPATH:$(cygpath -m "$VCToolsInstallDir")lib/x64 -LIBPATH:$sdk/ucrt/x64 -LIBPATH:$sdk/um/x64")
+  fi
   # Host tools (table generators) link with MSVC link.exe like the libraries;
   # clang-cl from the LLVM release would otherwise drive lld-link.
   "$s/configure" "${args[@]}" "${cross[@]}" --arch="$FF_ARCH" --cc="$cc" --cxx="$cc" \
-    --host-cc=clang-cl --host-ld="$s/compat/windows/mslink" \
+    "${host[@]}" \
     --pkg-config=pkgconf --prefix="$(w "$PREFIX")" \
     --extra-cflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")" --extra-cxxflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")" \
     --extra-ldflags="$HARDEN_LDFLAGS -LIBPATH:$(w "$PREFIX/lib")" \

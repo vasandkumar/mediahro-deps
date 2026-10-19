@@ -163,6 +163,11 @@ EOF
   if [ "$arch" = arm64 ]; then
     cat >> "$T/meson.ini" <<EOF
 needs_exe_wrapper = true
+# Answers for checks glib would otherwise have to run on the target.
+growing_stack = false
+have_c99_vsnprintf = true
+have_c99_snprintf = true
+have_unix98_printf = false
 
 [host_machine]
 system = 'windows'
