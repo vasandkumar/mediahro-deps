@@ -296,8 +296,9 @@ recipes() {
     -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled -Dpng=disabled -Dzlib=disabled
   meson_build fontconfig -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled \
     -Dxml-backend=expat -Dfontations=disabled -Ddefault-fonts-dirs=/system/fonts
+  local ass_asm=enabled; [ "$ABI" = armeabi-v7a ] && ass_asm=disabled  # libass has no 32-bit ARM assembly
   meson_build libass -Dfontconfig=enabled -Ddirectwrite=disabled -Dcoretext=disabled -Drequire-system-font-provider=false \
-    -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled -Dcheckasm=disabled -Dlibunibreak=disabled -Dasm=enabled
+    -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled -Dcheckasm=disabled -Dlibunibreak=disabled -Dasm=$ass_asm
   cmake_build uchardet -DBUILD_BINARY=OFF -DBUILD_STATIC=OFF
 
   # Codecs
@@ -403,7 +404,7 @@ recipes() {
 
   # Sources and archives (TLS: none on Android, I/O reaches curl through the app's stream callbacks)
   cmake_build libsmb2 -DENABLE_EXAMPLES=OFF -DENABLE_LIBKRB5=OFF -DENABLE_GSSAPI=OFF -DBUILD_SHARED_LIBS=ON
-  cmake_build libnfs -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_MULTITHREADING=ON
+  cmake_build libnfs -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_MULTITHREADING=OFF
   cmake_build curl -DCURL_ENABLE_SSL=OFF -DCURL_USE_OPENSSL=OFF -DCURL_USE_MBEDTLS=OFF -DCURL_USE_WOLFSSL=OFF -DCURL_USE_GNUTLS=OFF \
     -DCURL_USE_RUSTLS=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_USE_LIBSSH=OFF -DCURL_USE_GSSAPI=OFF -DUSE_LIBIDN2=OFF -DCURL_USE_LIBPSL=OFF \
     -DUSE_NGHTTP2=OFF -DUSE_NGTCP2=OFF -DCURL_BROTLI=ON -DCURL_ZSTD=ON -DCURL_ZLIB=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \

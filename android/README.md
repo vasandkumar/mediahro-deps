@@ -51,6 +51,8 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
 
 - fontconfig looks in `/system/fonts`; set `FONTCONFIG_FILE` / `FONTCONFIG_PATH` and a writable cache
   directory from the app before the first libass use.
+- libnfs 8.0 is built without its multithreading layer (it does not compile against bionic): use one
+  `nfs_context` per isolate/thread (lane B2).
 - libvulkan, libEGL, libGLESv2, libmediandk, libaaudio, libOpenSLES and libandroid are NDK system libraries.
 
 ## Development
