@@ -66,7 +66,9 @@ r_vulkan_headers() {
 # delay-loaded by libplacebo and mpv (stage_target does not ship it).
 r_vulkan_loader() {
   local s; s=$(fetch vulkan-loader)
-  cmake_build "$s" "$B" -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF -DUPDATE_DEPS=OFF \
+  # USE_MASM=OFF: only the import library is used, and the arm64 armasm
+  # sources need cl.exe preprocessing that a clang-cl toolchain does not do.
+  cmake_build "$s" "$B" -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF -DUPDATE_DEPS=OFF -DUSE_MASM=OFF \
     -DVulkanHeaders_DIR="$(w "$PREFIX/share/cmake/VulkanHeaders")"
   license vulkan-loader "$s/LICENSE.txt"
   built vulkan-loader
