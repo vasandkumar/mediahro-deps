@@ -103,6 +103,9 @@ def main() -> int:
     artefacts, not_built = [], []
     for lib in data["libraries"]:
         if "platforms" in lib and platform not in lib["platforms"]:
+            reason = lib.get("not_built_by_design", {}).get(platform)
+            if reason:
+                not_built.append({"name": lib["name"], "reason": f"by design: {reason}", "by_design": True})
             continue
         if built is not None and lib["name"] not in built:
             not_built.append({"name": lib["name"], "reason": "not built for this target (see STATUS.md §3)"})
@@ -139,6 +142,8 @@ def main() -> int:
     manifest = {"target": target,
                 "mediahro_deps": {"commit": git_commit(), "release": os.environ.get("GITHUB_REF_NAME")},
                 "artefacts": artefacts}
+    for removed in data.get("removed", []):
+        not_built.append({"name": removed["name"], "reason": f"by design: {removed['reason']}", "by_design": True})
     if not_built:
         manifest["not_built"] = not_built
     (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

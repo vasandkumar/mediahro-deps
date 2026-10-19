@@ -56,7 +56,7 @@ log() { printf '\n=== [%s] %s\n' "${ABI:-*}" "$*"; }
 
 python3 "$ROOT/scripts/verify_flags.py"
 python3 "$ROOT/scripts/sources.py" fetch --platform android --dest "$SRC" --cache "$WORK/downloads" \
-  --skip openscreen-libcast libssh2 ${SOURCES_SKIP:-}
+  ${SOURCES_SKIP:+--skip $SOURCES_SKIP}
 
 # --- flags files ------------------------------------------------------------------
 
@@ -304,11 +304,12 @@ recipes() {
   # Codecs
   cmake_build libjpeg-turbo -DENABLE_STATIC=OFF -DENABLE_SHARED=ON -DWITH_TURBOJPEG=ON -DWITH_JAVA=OFF -DWITH_TOOLS=OFF -DWITH_TESTS=OFF
   meson_build dav1d -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false -Denable_asm=true
-  local vpx_as=(); [ "$ABI" = x86_64 ] && vpx_as=(--as=nasm)
+  # libvpx assembles with nasm on x86_64 and with the NDK clang on ARM (not the host's GNU as).
+  local vpx_as=() vpx_asm="$CC -c"; [ "$ABI" = x86_64 ] && { vpx_as=(--as=nasm); vpx_asm=nasm; }
   if should_build libvpx --target="$VPX_TARGET" --enable-pic --disable-shared --enable-static --disable-examples \
        --disable-tools --disable-docs --disable-unit-tests --enable-vp9-highbitdepth --disable-runtime-cpu-detect "${vpx_as[@]}"; then
     local b="$BUILD/libvpx"; rm -rf "$b"; mkdir -p "$b"
-    (cd "$b" && CROSS="" CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="${vpx_as:+nasm}" \
+    (cd "$b" && CROSS="" CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="$vpx_asm" \
        "$SRC/libvpx/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" "${STEP_ARGS[@]}")
     make -C "$b" -j "$JOBS"
     make -C "$b" install
@@ -426,12 +427,15 @@ ANDROID_SYSTEM_LIBS="libc.so libm.so libdl.so liblog.so libz.so libandroid.so li
 
 check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unversioned, and needs only shipped or system libs
   local dir="$1" so errs=0 shipped
+  # 16 KB pages exist only on 64-bit devices; the NDK's 32-bit libc++_shared.so is 4 KB-aligned.
+  # Everything built here is linked with max-page-size=16384 on every ABI.
+  local MIN_ALIGN=16384; [ "$ABI" = armeabi-v7a ] && MIN_ALIGN=4096
   shipped="$(cd "$dir" && ls *.so | tr '\n' ' ')"
   for so in "$dir"/*.so; do
     local n; n="$(basename "$so")"
     local hdr dyn segs; hdr="$("$READELF" -lW "$so")"; dyn="$("$READELF" -dW "$so")"
     while read -r align; do
-      [ $((align)) -ge 16384 ] || { echo "elf: $n LOAD segment aligned $align (< 16 KB)"; errs=$((errs+1)); }
+      [ $((align)) -ge "$MIN_ALIGN" ] || { echo "elf: $n LOAD segment aligned $align (< $MIN_ALIGN)"; errs=$((errs+1)); }
     done < <(awk '$1=="LOAD"{print $NF}' <<<"$hdr")
     grep -q GNU_RELRO <<<"$hdr" || { echo "elf: $n has no RELRO"; errs=$((errs+1)); }
     grep -qE 'BIND_NOW|FLAGS_1.*NOW' <<<"$dyn" || { echo "elf: $n is not BIND_NOW"; errs=$((errs+1)); }
