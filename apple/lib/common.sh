@@ -266,11 +266,13 @@ cmake_build() {
   run_logged "$name" cmake --install "$b"
 }
 
-# Environment for autotools-style configure scripts.
+# Environment for autotools-style configure scripts. The target triple and
+# sysroot live in CC/CXX themselves: libtool drops unknown flags such as
+# -target from LDFLAGS when it links a dylib.
 autotools_env() {
-  env CC="$CC_BIN" CXX="$CXX_BIN" OBJC="$CC_BIN" \
+  env CC="$CC_BIN $TFLAGS" CXX="$CXX_BIN $TFLAGS" OBJC="$CC_BIN $TFLAGS" \
     AR="$AR_BIN" RANLIB="$RANLIB_BIN" STRIP="$STRIP_BIN" \
-    CFLAGS="$TFLAGS $HARDEN_CFLAGS" CXXFLAGS="$TFLAGS $HARDEN_CFLAGS" OBJCFLAGS="$TFLAGS $HARDEN_CFLAGS" \
+    CFLAGS="$HARDEN_CFLAGS" CXXFLAGS="$HARDEN_CFLAGS" OBJCFLAGS="$HARDEN_CFLAGS" \
     CPPFLAGS="-I$PREFIX/include" \
     LDFLAGS="$TFLAGS -L$PREFIX/lib $HARDEN_LDFLAGS" \
     "$@"
@@ -306,6 +308,22 @@ wrap_static() {
     -install_name "$PREFIX/lib/$dylib" -current_version "$version" -compatibility_version "${version%%.*}" \
     -Wl,-dead_strip_dylibs $HARDEN_LDFLAGS
   rm -f "$archive"
+}
+
+# check_dylib FILE : right architecture, platform and deployment target.
+check_dylib() {
+  local f=$1 archs plat minos want
+  archs=$(lipo -archs "$f")
+  [ "$archs" = "$ARCH" ] || die "${f##*/} ($SLICE) is built for '$archs', expected $ARCH"
+  read -r plat minos < <(otool -l "$f" | awk '/cmd LC_BUILD_VERSION/ { b = 1 } b && $1 == "platform" { p = $2 } b && $1 == "minos" { print p, $2; exit }') || true
+  case $PLATFORM in
+    macos) want="1 MACOS" ;;
+    ios) want="2 IOS" ;;
+    iossim) want="7 IOSSIMULATOR" ;;
+  esac
+  [[ " $want " == *" ${plat:-none} "* ]] || die "${f##*/} ($SLICE) has platform '${plat:-none}', expected $PLATFORM"
+  [ "$(printf '%s\n%s\n' "$minos" "$MIN" | sort -V | tail -1)" = "$MIN" ] \
+    || die "${f##*/} ($SLICE) requires $minos, newer than the deployment target $MIN"
 }
 
 # Fails when a configure step silently dropped a feature we asked for.

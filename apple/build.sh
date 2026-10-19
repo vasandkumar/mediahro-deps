@@ -99,6 +99,7 @@ for slice in $SLICES; do
     for f in "$PREFIX"/lib/*.dylib; do
       [ -e "$f" ] && [ ! -L "$f" ] || continue
       printf '%s\n' "$before" | grep -qxF "$f" && continue
+      check_dylib "$f"
       stem=$(dylib_stem "$f")
       # glib's gettext stub is its own pinned library (LGPL, dynamic).
       if [ "$stem" = libintl ]; then STEM_LIB[$stem]=proxy-libintl; else STEM_LIB[$stem]=$r; fi
