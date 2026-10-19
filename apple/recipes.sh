@@ -34,9 +34,10 @@ build_glib() {
   wrapdir="$s/subprojects/packagecache"
   mkdir -p "$wrapdir"
   cp "$(fetch proxy-libintl)" "$wrapdir/proxy-libintl-$(pin_version proxy-libintl).tar.gz"
-  # pipe2 and free_sized/free_aligned_sized first appear in the 26 SDKs; meson's
-  # link test finds them, but they do not exist on iOS 16 / macOS 12.
-  perl -0pi -e "s/\n  'pipe2',//; s/\n  'free_aligned_sized',//; s/\n  'free_sized',//" "$s/meson.build"
+  # The 26 SDKs' libSystem stubs export pipe2 without declaring it for older
+  # deployment targets, so meson's link test finds it although it does not
+  # exist on iOS 16 / macOS 12.
+  perl -0pi -e "s/\n  'pipe2',//" "$s/meson.build"
   # _NSGetEnviron is private API on iOS (App Store rejection); glib only skips it
   # for the deprecated system = 'ios', so restrict it to macOS here.
   perl -0pi -e "s/if host_system == 'darwin'\n  functions \+= \['_NSGetEnviron'\]/if host_system == 'darwin' and subsystem == 'macos'\n  functions += ['_NSGetEnviron']/" "$s/meson.build"
