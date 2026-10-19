@@ -102,15 +102,16 @@ build_libvpx() {
   # uses the portable C build with our flags. The dylib itself is linked below
   # with the slice's deployment target.
   cflags="$HARDEN_CFLAGS"
+  local tc=""
   case $SLICE in
     ios-arm64) target=arm64-darwin-gcc ;;
-    iossim-arm64) target=generic-gnu; cflags="$TFLAGS $HARDEN_CFLAGS" ;;
+    iossim-arm64) target=generic-gnu; tc=" $TFLAGS" ;;
     iossim-x86_64) target=x86_64-iphonesimulator-gcc ;;
     macos-arm64) target=arm64-darwin21-gcc; cflags="-mmacosx-version-min=$MACOS_MIN $HARDEN_CFLAGS" ;;
     macos-x86_64) target=x86_64-darwin21-gcc; cflags="-mmacosx-version-min=$MACOS_MIN $HARDEN_CFLAGS" ;;
   esac
   if [ "$ARCH" = x86_64 ]; then extra+=(--as=nasm); else extra+=(--disable-sve --disable-sve2); fi
-  (cd "$s" && run_logged libvpx env CC="$CC_BIN" CXX="$CXX_BIN" AR="$AR_BIN" LD="$CC_BIN" \
+  (cd "$s" && run_logged libvpx env CC="$CC_BIN$tc" CXX="$CXX_BIN$tc" AR="$AR_BIN" LD="$CC_BIN$tc" \
     NASM="$NASM" PATH="$(dirname "$NASM"):$PATH" \
     ./configure --target="$target" --prefix="$PREFIX" --enable-static --disable-shared --enable-pic \
     --disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-install-bins \
