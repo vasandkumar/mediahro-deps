@@ -442,9 +442,10 @@ build_moltenvk() {
   local s sc ver; s=$(src moltenvk); sc=$(src spirv-cross)
   if [ "$OS" = ios ]; then
     # MoltenVK's CMake build links the macOS frameworks unconditionally; on iOS
-    # the platform UI framework is UIKit and IOKit is not used.
-    perl -0pi -e 's/find_library\(APPKIT_LIBRARY AppKit REQUIRED\)/find_library(APPKIT_LIBRARY UIKit REQUIRED)/; s/find_library\(IOKIT_LIBRARY IOKit REQUIRED\)\n//; s/\n\t\$\{IOKIT_LIBRARY\}//' "$s/Common/CMakeLists.txt"
-    if grep -q 'AppKit\|IOKIT' "$s/Common/CMakeLists.txt"; then die "MoltenVK: iOS framework patch did not apply"; fi
+    # the platform UI framework is UIKit, IOKit is not used and CoreGraphics
+    # (which AppKit brings in on macOS) is linked directly.
+    perl -0pi -e 's/find_library\(APPKIT_LIBRARY AppKit REQUIRED\)/find_library(APPKIT_LIBRARY UIKit REQUIRED)/; s/find_library\(IOKIT_LIBRARY IOKit REQUIRED\)/find_library(IOKIT_LIBRARY CoreGraphics REQUIRED)/' "$s/Common/CMakeLists.txt"
+    if grep -q 'AppKit|IOKit REQUIRED' "$s/Common/CMakeLists.txt"; then\|IOKIT' "$s/Common/CMakeLists.txt"; then die "MoltenVK: iOS framework patch did not apply"; fi
   fi
   ver=$(sed -n 's/^#define VK_HEADER_VERSION \([0-9]*\).*/\1/p' "$PREFIX/include/vulkan/vulkan_core.h")
   # Vulkan-Headers and SPIRV-Cross are the verified versions.json pins (CPM uses
