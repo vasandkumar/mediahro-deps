@@ -6,3 +6,7 @@
 --enable-bzlib
 --enable-lzma
 --enable-iconv
+# MediaCodec (hwdec=mediacodec in mpv; CAST-005 hardware H.264/HEVC encode).
+--enable-decoder=h264_mediacodec,hevc_mediacodec,av1_mediacodec,vp8_mediacodec,vp9_mediacodec,mpeg2_mediacodec,mpeg4_mediacodec
+--enable-encoder=h264_mediacodec,hevc_mediacodec
+--enable-protocol=android_content
