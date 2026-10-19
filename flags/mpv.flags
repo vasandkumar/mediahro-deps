@@ -1,11 +1,10 @@
-# mpv meson options (docs/05 §4.1): LGPL build, libmpv only, no scripting.
+# mpv meson options (docs/05 §4.1): LGPL build, libmpv only, no scripting. libplacebo is mandatory in mpv 0.41 (no option).
 -Dgpl=false
 -Dlibmpv=true
 -Dcplayer=false
 -Dlua=disabled
 -Djavascript=disabled
 -Dcplugins=disabled
--Dlibplacebo=enabled
 -Dvulkan=enabled
 -Dlibarchive=disabled
 -Ddvdnav=disabled

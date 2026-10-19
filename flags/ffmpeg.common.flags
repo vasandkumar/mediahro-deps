@@ -13,6 +13,11 @@
 --disable-mbedtls
 --enable-pic
 --enable-hardcoded-tables
+# GPL-only sources compiled even without --enable-gpl (found by scripts/source_scan.py):
+# perlin.c (perlin filter), qp_table.c (codecview filter), aarch64/crc.S (see patches/ffmpeg).
+--disable-filter=perlin
+--disable-filter=codecview
+--disable-arm-crc
 --enable-libdav1d
 --enable-libvpx
 --enable-libopus

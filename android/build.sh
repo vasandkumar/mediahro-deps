@@ -236,7 +236,9 @@ autotools_build() {  # autotools_build <name> [configure options...]  (in a copy
   should_build "$name" "${opts[@]}" || return 0
   local b="$BUILD/$name"; rm -rf "$b"; cp -a "$SRC/$name" "$b"
   (cd "$b" && CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" CPPFLAGS="-I$PREFIX/include" \
-     LDFLAGS="$LDHARDEN -L$PREFIX/lib" ./configure "${opts[@]}")
+     LDFLAGS="$LDHARDEN -L$PREFIX/lib" LIBS="$("$CC" -print-libgcc-file-name)" ./configure "${opts[@]}")
+  # libtool links C++ libraries with -nostdlib: the compiler-rt builtins (LIBS above) keep
+  # outline atomics and other helpers inside the library instead of leaving them undefined.
   unversion_libtool "$b"
   make -C "$b" -j "$JOBS"
   make -C "$b" install
@@ -294,8 +296,9 @@ recipes() {
     -Ddocs=disabled -Dutilities=disabled -Dbenchmark=disabled -Dpng=disabled -Dzlib=disabled
   meson_build fontconfig -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled \
     -Dxml-backend=expat -Dfontations=disabled -Ddefault-fonts-dirs=/system/fonts
+  local ass_asm=enabled; [ "$ABI" = armeabi-v7a ] && ass_asm=disabled  # libass has no 32-bit ARM assembly
   meson_build libass -Dfontconfig=enabled -Ddirectwrite=disabled -Dcoretext=disabled -Drequire-system-font-provider=false \
-    -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled -Dcheckasm=disabled -Dlibunibreak=disabled -Dasm=enabled
+    -Dtest=disabled -Dcompare=disabled -Dprofile=disabled -Dfuzz=disabled -Dcheckasm=disabled -Dlibunibreak=disabled -Dasm=$ass_asm
   cmake_build uchardet -DBUILD_BINARY=OFF -DBUILD_STATIC=OFF
 
   # Codecs
@@ -361,12 +364,18 @@ recipes() {
 
   # Blu-ray (unencrypted BDMV only; no BD-J)
   meson_build libudfread
-  meson_build libbluray -Dbdj_jar=disabled -Djava9=false -Denable_tools=false -Denable_devtools=false -Denable_docs=false \
+  meson_build libbluray -Dbdj_jar=disabled -Denable_tools=false -Denable_devtools=false -Denable_examples=false -Denable_docs=false \
     -Dfreetype=enabled -Dfontconfig=enabled -Dlibxml2=disabled -Dembed_udfread=false
 
   # mpv (libmpv only)
   mapfile -t MPV_FLAGS < <(flags mpv.flags; flags mpv.android.flags)
   meson_build mpv "${MPV_FLAGS[@]}"
+
+  # Archives (libvips dzsave/archive loader and the app's archive browser)
+  cmake_build libarchive -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF \
+    -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_CNG=OFF \
+    -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF \
+    -DENABLE_ICONV=ON -DENABLE_ZSTD=ON -DENABLE_LZMA=ON -DENABLE_BZip2=ON -DENABLE_ZLIB=ON -DENABLE_WERROR=OFF
 
   # Image pipeline
   cmake_build libspng -DSPNG_SHARED=ON -DSPNG_STATIC=OFF -DBUILD_EXAMPLES=OFF
@@ -395,20 +404,16 @@ recipes() {
 
   # Sources and archives (TLS: none on Android, I/O reaches curl through the app's stream callbacks)
   cmake_build libsmb2 -DENABLE_EXAMPLES=OFF -DENABLE_LIBKRB5=OFF -DENABLE_GSSAPI=OFF -DBUILD_SHARED_LIBS=ON
-  cmake_build libnfs -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_MULTITHREADING=ON
+  cmake_build libnfs -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_MULTITHREADING=OFF
   cmake_build curl -DCURL_ENABLE_SSL=OFF -DCURL_USE_OPENSSL=OFF -DCURL_USE_MBEDTLS=OFF -DCURL_USE_WOLFSSL=OFF -DCURL_USE_GNUTLS=OFF \
     -DCURL_USE_RUSTLS=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_USE_LIBSSH=OFF -DCURL_USE_GSSAPI=OFF -DUSE_LIBIDN2=OFF -DCURL_USE_LIBPSL=OFF \
     -DUSE_NGHTTP2=OFF -DUSE_NGTCP2=OFF -DCURL_BROTLI=ON -DCURL_ZSTD=ON -DCURL_ZLIB=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
     -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF -DCURL_DISABLE_LDAP=ON -DCURL_DISABLE_LDAPS=ON \
     -DENABLE_ARES=OFF -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DBUILD_STATIC_LIBS=OFF
-  cmake_build libarchive -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF \
-    -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_CNG=OFF \
-    -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF \
-    -DENABLE_ICONV=ON -DENABLE_ZSTD=ON -DENABLE_LZMA=ON -DENABLE_BZip2=ON -DENABLE_ZLIB=ON -DENABLE_WERROR=OFF
 
   # Audio analysis and speech
   cmake_build libebur128 -DBUILD_STATIC_LIBS=OFF -DENABLE_TESTS=OFF
-  cmake_build chromaprint -DFFT_LIB=kissfft -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF
+  cmake_build chromaprint -DFFT_LIB=avtx -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF
   local ggml=(-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF)
   [ "$ABI" = x86_64 ] && ggml+=(-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF -DGGML_SSE42=ON)
   cmake_build whisper.cpp -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_SDL2=OFF \
@@ -432,6 +437,8 @@ check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unver
     grep -qE 'BIND_NOW|FLAGS_1.*NOW' <<<"$dyn" || { echo "elf: $n is not BIND_NOW"; errs=$((errs+1)); }
     if grep -E 'GNU_STACK' <<<"$hdr" | grep -q 'RWE'; then echo "elf: $n has an executable stack"; errs=$((errs+1)); fi
     grep -q TEXTREL <<<"$dyn" && { echo "elf: $n has text relocations"; errs=$((errs+1)); }
+    local undef; undef="$("$NM" -D --undefined-only "$so" | awk '{print $NF}' | grep -E '^__(aarch64_|emutls_|clear_cache$)' | head -3 || true)"
+    [ -z "$undef" ] || { echo "elf: $n leaves compiler-rt builtins undefined: $undef"; errs=$((errs+1)); }
     local soname; soname="$(sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p' <<<"$dyn")"
     [ "$soname" = "$n" ] || { echo "elf: $n SONAME is '$soname'"; errs=$((errs+1)); }
     local need
@@ -440,7 +447,7 @@ check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unver
       [[ "$need" =~ ^lib(ssl|crypto|gnutls|mbed|wolfssl|boringssl) ]] && { echo "elf: $n links TLS library $need"; errs=$((errs+1)); }
     done
     if [ "$ABI" = arm64-v8a ]; then
-      "$READELF" -nW "$so" | grep -q 'AArch64 feature: BTI, PAC' || echo "elf: note: $n lacks BTI/PAC property (an object was built without -mbranch-protection)"
+      grep -qi 'aarch64 feature: BTI, PAC' <<<"$("$READELF" -nW "$so")" || echo "elf: note: $n lacks BTI/PAC property (an object was built without -mbranch-protection)"
     fi
   done
   return $errs
@@ -481,7 +488,7 @@ stage_abi() {
     } > "$st/licenses/$name.txt"
     [ -s "$st/licenses/$name.txt" ] || { echo "build: no licence text found for $name" >&2; exit 1; }
   done
-  { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; cat "$NDK/NOTICE" 2>/dev/null | head -c 200000; } > "$st/licenses/libc++.txt"
+  { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; head -c 200000 "$NDK/NOTICE" 2>/dev/null || true; } > "$st/licenses/libc++.txt"
   check_elf "$st/lib"
   local gpl
   gpl="$(python3 - "$st/build-info" <<'PY'

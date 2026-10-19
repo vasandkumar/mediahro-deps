@@ -16,7 +16,8 @@
   python scripts/sources.py list [--platform android]
       Prints name, version and source URL.
 
-Sources with "verify": "git" (gitiles archives are not byte-stable) are
+Patches in patches/<name>/*.patch are applied after extraction (and listed
+in each archive's manifest). Sources with "verify": "git" (gitiles archives are not byte-stable) are
 cloned and checked out at the pinned commit instead of hashed.
 """
 
@@ -39,6 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSIONS = ROOT / "versions.json"
 KEYS = ROOT / "keys"
+PATCHES = ROOT / "patches"
 UA = {"User-Agent": "mediahro-deps/1 (+https://github.com/vasandkumar/mediahro-deps)"}
 
 
@@ -315,6 +317,11 @@ def git_checkout(lib: dict, dest: Path) -> None:
     stamp.write_text(commit)
 
 
+def patches_for(name: str) -> list[Path]:
+    """patches/<name>/*.patch, applied in name order after a verified extraction (published with every release)."""
+    return sorted((PATCHES / name).glob("*.patch"))
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     data = load()
     dest_root, cache = Path(args.dest), Path(args.cache)
@@ -332,7 +339,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print(f"sources: {lib['name']} is not pinned", file=sys.stderr)
             return 1
         stamp = dest / ".mediahro-sha256"
-        if stamp.exists() and stamp.read_text().strip() == lib["sha256"]:
+        want = lib["sha256"] + "".join(f"+{p.name}:{sha256(p)[:16]}" for p in patches_for(lib["name"]))
+        if stamp.exists() and stamp.read_text().strip() == want:
             continue
         path = download(lib, cache)
         got = sha256(path)
@@ -342,7 +350,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             return 1
         verify_signature(lib, path, cache)
         extract(path, dest)
-        stamp.write_text(lib["sha256"])
+        for patch in patches_for(lib["name"]):
+            subprocess.run(["patch", "-p1", "--batch", "--forward", "--no-backup-if-mismatch", "-d", str(dest),
+                            "-i", str(patch)], check=True)
+            print(f"  applied {patch.relative_to(ROOT).as_posix()}")
+        stamp.write_text(want)
         print(f"fetch {lib['name']} {lib['version']} ok")
     return 0
 
