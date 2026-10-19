@@ -588,7 +588,10 @@ build_mpv() {
   read_flags "$APPLE/flags/mpv.$OS.flags"; local os=("${FLAGS[@]}")
   local extra=()
   [ "$OS" = macos ] && extra+=("-Dswift-flags=-target $TRIPLE")
-  meson_build mpv "$s" "${common[@]}" "${apple[@]}" "${os[@]}" "${extra[@]}"
+  # mpv adds "-isysroot <SDK>" to every link from TOOLS/macos-sdk-version.py,
+  # which defaults to the macOS SDK; point it at this slice's SDK.
+  MACOS_SDK=$SYSROOT MACOS_SDK_VERSION=$(xcrun --sdk "$SDK" --show-sdk-version) \
+    meson_build mpv "$s" "${common[@]}" "${apple[@]}" "${os[@]}" "${extra[@]}"
   local cfg="$BUILD/mpv/config.h"
   require_grep "$cfg" "#define HAVE_GPL 0" "mpv must be the LGPL build"
   for f in VULKAN VIDEOTOOLBOX_PL; do
