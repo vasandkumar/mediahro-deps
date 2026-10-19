@@ -30,7 +30,7 @@ fetch() {
   file="$CACHE/$name-$(pin_version "$name")-${url##*/}"
   if [ ! -f "$file" ]; then
     log "download $name $(pin_version "$name")"
-    curl -fL --retry 5 --retry-delay 5 --connect-timeout 30 -o "$file.part" "$url" || die "download failed: $url"
+    curl -fsSL --retry 5 --retry-delay 5 --connect-timeout 30 -o "$file.part" "$url" || die "download failed: $url"
     mv "$file.part" "$file"
   fi
   local got
@@ -159,6 +159,7 @@ objcpp_link_args = $largs
 
 [properties]
 needs_exe_wrapper = $exe_wrapper
+pkg_config_libdir = ['$PREFIX/lib/pkgconfig', '$PREFIX/share/pkgconfig', '$SHIM/pkgconfig']
 growing_stack = false
 have_c99_vsnprintf = true
 have_c99_snprintf = true

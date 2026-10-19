@@ -34,6 +34,15 @@ build_glib() {
   wrapdir="$s/subprojects/packagecache"
   mkdir -p "$wrapdir"
   cp "$(fetch proxy-libintl)" "$wrapdir/proxy-libintl-$(pin_version proxy-libintl).tar.gz"
+  # pipe2 and free_sized/free_aligned_sized first appear in the 26 SDKs; meson's
+  # link test finds them, but they do not exist on iOS 16 / macOS 12.
+  perl -0pi -e "s/\n  'pipe2',//; s/\n  'free_aligned_sized',//; s/\n  'free_sized',//" "$s/meson.build"
+  # _NSGetEnviron is private API on iOS (App Store rejection); glib only skips it
+  # for the deprecated system = 'ios', so restrict it to macOS here.
+  perl -0pi -e "s/if host_system == 'darwin'\n  functions \+= \['_NSGetEnviron'\]/if host_system == 'darwin' and subsystem == 'macos'\n  functions += ['_NSGetEnviron']/" "$s/meson.build"
+  grep -B1 "functions += \['_NSGetEnviron'\]" "$s/meson.build" | grep -q "subsystem == 'macos'" \
+    || die "glib: _NSGetEnviron patch did not apply"
+  if grep -q "^  'pipe2',$" "$s/meson.build"; then die "glib: pipe2 patch did not apply"; fi
   meson_build glib "$s" -Dtests=false -Dinstalled_tests=false -Dnls=disabled -Dintrospection=disabled \
     -Dman-pages=disabled -Ddocumentation=false -Ddtrace=disabled -Dsystemtap=disabled -Dsysprof=disabled \
     -Dlibmount=disabled -Dselinux=disabled -Dxattr=false -Dlibelf=disabled -Dglib_debug=disabled \
@@ -85,24 +94,27 @@ build_flac() {
 }
 
 build_libvpx() {
-  local s target extra=()
+  local s target cflags extra=()
   s=$(src libvpx)
-  # libvpx's own darwin targets set SDK and min-version flags; the arm64
-  # simulator has no target, so it uses the portable C build.
+  # libvpx's own darwin targets add their SDK, -arch and min-version flags (it
+  # rejects a second -target); the arm64 simulator has no libvpx target, so it
+  # uses the portable C build with our flags. The dylib itself is linked below
+  # with the slice's deployment target.
+  cflags="$HARDEN_CFLAGS"
   case $SLICE in
     ios-arm64) target=arm64-darwin-gcc ;;
-    iossim-arm64) target=generic-gnu ;;
+    iossim-arm64) target=generic-gnu; cflags="$TFLAGS $HARDEN_CFLAGS" ;;
     iossim-x86_64) target=x86_64-iphonesimulator-gcc ;;
-    macos-arm64) target=arm64-darwin21-gcc ;;
-    macos-x86_64) target=x86_64-darwin21-gcc ;;
+    macos-arm64) target=arm64-darwin21-gcc; cflags="-mmacosx-version-min=$MACOS_MIN $HARDEN_CFLAGS" ;;
+    macos-x86_64) target=x86_64-darwin21-gcc; cflags="-mmacosx-version-min=$MACOS_MIN $HARDEN_CFLAGS" ;;
   esac
-  [ "$ARCH" = x86_64 ] && extra+=(--as=nasm)
+  if [ "$ARCH" = x86_64 ]; then extra+=(--as=nasm); else extra+=(--disable-sve --disable-sve2); fi
   (cd "$s" && run_logged libvpx env CC="$CC_BIN" CXX="$CXX_BIN" AR="$AR_BIN" LD="$CC_BIN" \
     NASM="$NASM" PATH="$(dirname "$NASM"):$PATH" \
     ./configure --target="$target" --prefix="$PREFIX" --enable-static --disable-shared --enable-pic \
     --disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-install-bins \
     --enable-vp8 --enable-vp9 --enable-vp9-highbitdepth --enable-multithread \
-    --extra-cflags="$TFLAGS $HARDEN_CFLAGS" --extra-cxxflags="$TFLAGS $HARDEN_CFLAGS" "${extra[@]}")
+    --extra-cflags="$cflags" --extra-cxxflags="$cflags" "${extra[@]}")
   run_logged libvpx make -C "$s" -j "$JOBS"
   run_logged libvpx make -C "$s" install
   wrap_static libvpx "$PREFIX/lib/libvpx.a" libvpx.dylib "$(pin_version libvpx)"
@@ -285,6 +297,11 @@ build_whisper.cpp() {
 
 build_libbluray() {
   local s; s=$(src libbluray)
+  if [ "$OS" = ios ]; then
+    # DiskArbitration (disc mount lookup) is macOS-only: iOS uses the generic stub.
+    cp "$s/src/file/mount.c" "$s/src/file/mount_darwin.c"
+    sed -i '' 's/ -framework DiskArbitration//' "$s/configure"
+  fi
   # Unencrypted BDMV only: no libaacs/libbdplus, no BD-J (Java).
   autotools_build libbluray "$s" --disable-bdjava-jar --disable-examples --disable-doxygen-doc \
     --without-libxml2 --without-freetype --without-fontconfig
