@@ -11,7 +11,7 @@ It runs from Git Bash or MSYS2 bash (the CI matrix runs it from Git Bash on `win
 | clang-cl 23 | LLVM release tarball pinned in `deps.json` | Same compiler locally and in CI; `/clang:--target=` picks x64 or arm64 |
 | MSVC `link.exe`, `lib.exe`, `rc.exe`, CRT, Windows SDK | Visual Studio 2022+ found with `vswhere` | arm64 needs the `VC.Tools.ARM64` component |
 | meson, ninja, cmake, jinja2 | `requirements.txt`, `pip --require-hashes` | Private venv in the work dir |
-| nasm, pkgconf, gas-preprocessor | `deps.json` | pkgconf is built for the host; gas-preprocessor only feeds armasm64 for FFmpeg on arm64 |
+| nasm, pkgconf | `deps.json` | pkgconf is built for the host |
 
 Hardening on every binary: `/guard:cf` (compile and link), `/GS`, `/DYNAMICBASE`, `/HIGHENTROPYVA`, `/NXCOMPAT`, `/OPT:REF,ICF`, plus `/CETCOMPAT` on x64. The CRT is `/MD`: the app ships the VC++ 2015-2022 runtime, as every Flutter Windows app does. `lib/check_pe.py` fails the build unless every staged DLL meets these checks:
 - right machine type
@@ -67,7 +67,7 @@ Hardening on every binary: `/guard:cf` (compile and link), `/GS`, `/DYNAMICBASE`
 
 ### Build-time GPL tools
 
-The only GPL program that touches a source is `gas-preprocessor.pl`. On arm64 it rewrites FFmpeg's GNU-syntax assembly for armasm64; it adds no code of its own. `gperf` is **not** used: `patches/fontconfig` replaces it with `gperf-lite.py` (MIT), which writes the two lookup tables.
+No GPL program runs in the build. FFmpeg's arm64 assembly goes through clang-cl's integrated assembler, so no gas-preprocessor is needed. `gperf` is **not** used either: `patches/fontconfig` replaces it with `gperf-lite.py` (MIT), which writes the two lookup tables.
 
 ## Patches (`patches/<source>/`)
 

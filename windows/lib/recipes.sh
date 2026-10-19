@@ -189,7 +189,7 @@ r_libopenmpt() {
 
 # FFmpeg: LGPL-2.1+ (no --enable-gpl/nonfree/version3), shared, flags from
 # flags/ffmpeg.common.flags + flags/ffmpeg.windows.flags, clang-cl via the
-# msvc toolchain; arm64 assembly through gas-preprocessor + armasm64.
+# msvc toolchain; arm64 assembly through clang-cl's integrated assembler.
 r_ffmpeg() {
   local s args=() cross=() cc; s=$(fetch ffmpeg)
   rm -rf "$B"; mkdir -p "$B"; cd "$B"

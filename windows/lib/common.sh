@@ -48,9 +48,7 @@ setup_tools() {
 
   LLVM=$(fetch llvm)
   NASM=$(fetch nasm)
-  GASPP=$(fetch gas-preprocessor)
   cp -f "$NASM/nasm.exe" "$TOOLS/bin/"
-  cp -f "$GASPP/gas-preprocessor.pl" "$TOOLS/bin/" && chmod +x "$TOOLS/bin/gas-preprocessor.pl"
   [ -x "$LLVM/bin/clang-cl.exe" ] || die "clang-cl missing from $LLVM"
 
   VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
