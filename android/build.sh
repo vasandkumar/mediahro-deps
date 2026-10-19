@@ -399,10 +399,10 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   # FFmpeg
   mapfile -t FF_FLAGS < <(flags ffmpeg.common.flags; flags ffmpeg.android.flags)
   local ff_x86=(); [ "$ABI" = x86_64 ] && ff_x86=(--x86asmexe=nasm)
+  [ "$ABI" = armeabi-v7a ] && ff_x86=(--enable-neon --enable-thumb)
   # GNU libiconv (SUB-013): FFmpeg's configure check links without -liconv, which left libavcodec with
   # undefined libiconv_* symbols and no DT_NEEDED; link it explicitly.
   ff_x86+=(--extra-libs=-liconv)
-  [ "$ABI" = armeabi-v7a ] && ff_x86=(--enable-neon --enable-thumb)
   if should_build ffmpeg "${FF_FLAGS[@]}" --arch="$FF_ARCH" --cpu="$FF_CPU" "${ff_x86[@]}"; then
     local b="$BUILD/ffmpeg"; rm -rf "$b"; mkdir -p "$b"
     (cd "$b" && "$SRC/ffmpeg/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" --shlibdir="$PREFIX/lib" \
