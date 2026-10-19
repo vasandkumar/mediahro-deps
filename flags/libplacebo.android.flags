@@ -1,0 +1,8 @@
+-Dopengl=enabled
+-Dvk-proc-addr=enabled
+-Dd3d11=disabled
+-Dlibdovi=disabled
+-Dunwind=disabled
+-Dxxhash=disabled
+-Dbench=false
+-Dfuzz=false
