@@ -468,7 +468,13 @@ r_libexif() {
 # pcre2 and libffi come from glib's own wraps (meson verifies their hashes);
 # both permissive and built as DLLs.
 r_glib() {
-  local s; s=$(fetch glib)
+  local s ffi; s=$(fetch glib)
+  # Fetch the wraps (meson checks their hashes), then let libffi's port take
+  # its armasm64 path under clang-cl on arm64 (lib/patch_libffi_wrap.py).
+  (cd "$s" && meson subprojects download libffi pcre2 proxy-libintl)
+  for ffi in "$s"/subprojects/libffi-*/; do
+    "$HOST_PY" -I "$(w "$HERE/lib/patch_libffi_wrap.py")" "$(w "$ffi")"
+  done
   meson_build "$s" "$B" --wrap-mode=default -Dtests=false -Dinstalled_tests=false -Dnls=disabled \
     -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled -Dsysprof=disabled -Dlibelf=disabled \
     -Dpcre2:test=false -Dpcre2:grep=false
