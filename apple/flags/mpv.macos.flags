@@ -13,3 +13,4 @@
 -Dmacos-media-player=disabled
 -Dmacos-touchbar=disabled
 -Davfoundation=enabled
+-Dvideotoolbox-gl=enabled

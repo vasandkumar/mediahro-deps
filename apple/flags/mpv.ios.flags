@@ -5,3 +5,5 @@
 -Dswift-build=disabled
 # ao_avfoundation uses macOS-only CoreAudio HAL types; ao_audiounit is the iOS output.
 -Davfoundation=disabled
+# VideoToolbox→GL interop on iOS is hwdec_ios_gl (ios-gl); videotoolbox-gl is the macOS IOSurface/CGL one.
+-Dvideotoolbox-gl=disabled
