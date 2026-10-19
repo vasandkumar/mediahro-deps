@@ -563,16 +563,9 @@ build_ffmpeg() {
   for f in VIDEOTOOLBOX AUDIOTOOLBOX LIBDAV1D LIBVPX LIBOPUS LIBOPENMPT VULKAN ZLIB BZLIB ICONV LIBXML2; do
     require_grep "$cfg" "^CONFIG_$f=yes" "FFmpeg configure dropped $f"
   done
-  if grep -q '^CONFIG_SECURETRANSPORT=yes' "$cfg"; then
-    echo "ffmpeg ($SLICE): TLS via SecureTransport" >>"$WORK/notes.txt"
-  elif [ "$OS" = macos ]; then
-    die "FFmpeg configure dropped SecureTransport on $SLICE"
-  else
-    # The iOS SDK lacks SecIdentityCreate/SecItemImport, which FFmpeg's
-    # SecureTransport backend requires; HTTPS on iOS goes through the app's
-    # AVIO over URLSession (docs/05 4.1). No other TLS library is linked.
-    echo "ffmpeg ($SLICE): no TLS protocol in FFmpeg (iOS SDK has no SecIdentityCreate); HTTPS via app AVIO" >>"$WORK/notes.txt"
-  fi
+  # TLS from the OS only: SecureTransport (Security.framework) on every slice.
+  require_grep "$cfg" "^CONFIG_SECURETRANSPORT=yes" "FFmpeg configure dropped SecureTransport"
+  echo "ffmpeg ($SLICE): TLS via SecureTransport" >>"$WORK/notes.txt"
   for f in GPL NONFREE VERSION3 OPENSSL GNUTLS MBEDTLS LIBTLS POSTPROC; do
     if grep -q "^CONFIG_$f=yes" "$cfg"; then die "FFmpeg enabled $f on $SLICE"; fi
   done

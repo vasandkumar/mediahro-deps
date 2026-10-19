@@ -3,9 +3,7 @@
 # OS decoders first (docs/09 §4): VideoToolbox / AudioToolbox.
 --enable-videotoolbox
 --enable-audiotoolbox
-# TLS from the OS only (docs/05 §4.1, docs/07 rule 12). macOS: SecureTransport.
-# The iOS SDK lacks the APIs FFmpeg's SecureTransport backend needs, so FFmpeg
-# has no TLS there and HTTPS goes through the app's AVIO over URLSession.
+# TLS from the OS only (docs/05 §4.1, docs/07 rule 12): SecureTransport on iOS and macOS.
 --enable-securetransport
 # SDK libraries (--disable-autodetect in the common flags turns them off).
 --enable-zlib
