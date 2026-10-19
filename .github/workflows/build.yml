@@ -81,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fetch and verify every pinned source
-        run: python3 scripts/sources.py fetch --dest "$RUNNER_TEMP/src" --cache "$RUNNER_TEMP/sources" --skip openscreen-libcast
+        run: python3 scripts/sources.py fetch --dest "$RUNNER_TEMP/src" --cache "$RUNNER_TEMP/sources"
       - name: Source bundle
         run: |
           mkdir -p dist

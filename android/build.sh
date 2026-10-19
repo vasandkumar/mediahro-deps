@@ -56,7 +56,7 @@ log() { printf '\n=== [%s] %s\n' "${ABI:-*}" "$*"; }
 
 python3 "$ROOT/scripts/verify_flags.py"
 python3 "$ROOT/scripts/sources.py" fetch --platform android --dest "$SRC" --cache "$WORK/downloads" \
-  --skip openscreen-libcast libssh2 ${SOURCES_SKIP:-}
+  ${SOURCES_SKIP:+--skip $SOURCES_SKIP}
 
 # --- flags files ------------------------------------------------------------------
 

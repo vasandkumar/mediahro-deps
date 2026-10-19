@@ -41,11 +41,11 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
     build-info/<name>.json  configure line, produced files, source-scan result per library
     manifest.json       read by Mediahro's tools/licence_scan
 
-## Not built for Android (see Mediahro STATUS.md §3)
+## Not built for Android (by design, ADR-017: crypto stays with the OS)
 
-- `libssh2`: needs a crypto backend; Android has no OS crypto API in the NDK and the policy excludes
-  OpenSSL / mbedTLS (SFTP, NET-004).
-- `openscreen-libcast`: Chromium GN build with BoringSSL (CAST-001 FOSS flavour).
+- `libssh2`: Windows only (WinCNG). On Android SFTP uses sshj over JCA behind `SftpFacade`; FTPS runs over
+  `TlsSocketFacade` (SSLSocket), so curl has no TLS backend here.
+- `openscreen-libcast`: removed everywhere; the Dart CASTv2 sender over OS TLS sockets replaces it.
 - `moltenvk`, `zlib` (OS zlib), `vulkan-loader`, `spirv-cross`: not Android libraries.
 
 ## Runtime notes for the engine (B1)
