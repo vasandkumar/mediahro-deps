@@ -585,7 +585,10 @@ r_whisper_cpp() {
 r_vvdec() {
   local s; s=$(fetch vvdec)
   [ "$ARCH" = x64 ] && export CFLAGS="-msse4.1 -mxsave" CXXFLAGS="-msse4.1 -mxsave"
-  cmake_build "$s" "$B" -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF -DVVDEC_ENABLE_WERROR=OFF
+  # arm64: baseline NEON. Windows has no SVE support, and vvdec's RDM/SVE probes
+  # use GCC -march flags that clang-cl merely ignores (so they pass falsely).
+  local arm=(); [ "$ARCH" = arm64 ] && arm=(-DVVDEC_ENABLE_ARM_SIMD_RDM=OFF -DVVDEC_ENABLE_ARM_SIMD_SVE=OFF -DVVDEC_ENABLE_ARM_SIMD_SVE2=OFF)
+  cmake_build "$s" "$B" "${arm[@]}" -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF -DVVDEC_ENABLE_WERROR=OFF
   license vvdec "$s/LICENSE.txt"
   built vvdec
 }
