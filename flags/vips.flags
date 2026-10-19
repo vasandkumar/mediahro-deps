@@ -1,0 +1,20 @@
+# libvips 8.18 (LGPL, dynamic). OS decoders handle HEIC; no libheif on Windows (docs/05 §5, §10).
+-Dheif=disabled
+-Dpoppler=disabled
+-Dmagick=disabled
+-Dopenslide=disabled
+-Dmatio=disabled
+-Dcfitsio=disabled
+-Dfftw=disabled
+-Dimagequant=disabled
+-Dcgif=enabled
+-Djpeg-xl=enabled
+-Dspng=enabled
+-Dwebp=enabled
+-Dtiff=enabled
+-Dexif=enabled
+-Dlcms=enabled
+-Dopenexr=enabled
+-Dmodules=disabled
+-Dintrospection=disabled
+-Ddefault_library=shared

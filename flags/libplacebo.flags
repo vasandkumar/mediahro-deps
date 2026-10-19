@@ -1,0 +1,7 @@
+-Dvulkan=enabled
+-Dshaderc=enabled
+-Dglslang=disabled
+-Dlcms=enabled
+-Ddemos=false
+-Dtests=false
+-Ddefault_library=shared

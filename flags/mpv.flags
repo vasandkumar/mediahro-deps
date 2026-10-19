@@ -1,0 +1,15 @@
+# mpv meson options (docs/05 §4.1): LGPL build, libmpv only, no scripting.
+-Dgpl=false
+-Dlibmpv=true
+-Dcplayer=false
+-Dlua=disabled
+-Djavascript=disabled
+-Dlibplacebo=enabled
+-Dvulkan=enabled
+-Dlibarchive=disabled
+-Ddvdnav=disabled
+-Dcdda=disabled
+-Dmanpage-build=disabled
+-Dhtml-build=disabled
+-Dpdf-build=disabled
+-Ddefault_library=shared

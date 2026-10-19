@@ -1,0 +1,22 @@
+# FFmpeg configure flags shared by every target (docs/05 §4.1, §10; docs/09 §2).
+# LGPL-2.1+: never --enable-gpl, --enable-nonfree or --enable-version3.
+--enable-shared
+--disable-static
+--disable-programs
+--disable-doc
+--disable-debug
+--disable-postproc
+--disable-avdevice
+--disable-autodetect
+--disable-openssl
+--disable-gnutls
+--disable-libtls
+--disable-mbedtls
+--enable-pic
+--enable-hardcoded-tables
+--enable-libdav1d
+--enable-libvpx
+--enable-libopus
+--enable-libopenmpt
+--enable-vulkan
+--extra-cflags=-D_FORTIFY_SOURCE=2 -fstack-protector-strong

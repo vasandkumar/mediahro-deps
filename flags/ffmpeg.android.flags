@@ -1,0 +1,4 @@
+--target-os=android
+--enable-jni
+--enable-mediacodec
+--enable-cross-compile
