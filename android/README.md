@@ -21,7 +21,8 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
 - **Licences** (Mediahro docs/09 §2): no GPL code — `scripts/source_scan.py` lists the sources linked
   into each shipped library and fails on GPL-only files; LGPL libraries are shared objects; no OpenSSL,
   BoringSSL, mbedTLS or GnuTLS (nothing links a TLS library; curl is built without TLS).
-- **ELF** (`check_elf`): every `.so` has 16 KB-aligned LOAD segments, RELRO + BIND_NOW, a
+- **ELF** (`check_elf`): every `.so` has 16 KB-aligned LOAD segments (64-bit ABIs; on armeabi-v7a, where
+  devices use 4 KB pages, only the NDK's own `libc++_shared.so` is 4 KB-aligned), RELRO + BIND_NOW, a
   non-executable stack, no text relocations, an unversioned SONAME equal to its file name (Gradle only
   packages `lib*.so`), and needs only libraries in the archive or NDK system libraries.
 - **Hardening**: `-D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection`, PIC,

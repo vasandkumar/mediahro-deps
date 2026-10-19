@@ -427,12 +427,15 @@ ANDROID_SYSTEM_LIBS="libc.so libm.so libdl.so liblog.so libz.so libandroid.so li
 
 check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unversioned, and needs only shipped or system libs
   local dir="$1" so errs=0 shipped
+  # 16 KB pages exist only on 64-bit devices; the NDK's 32-bit libc++_shared.so is 4 KB-aligned.
+  # Everything built here is linked with max-page-size=16384 on every ABI.
+  local MIN_ALIGN=16384; [ "$ABI" = armeabi-v7a ] && MIN_ALIGN=4096
   shipped="$(cd "$dir" && ls *.so | tr '\n' ' ')"
   for so in "$dir"/*.so; do
     local n; n="$(basename "$so")"
     local hdr dyn segs; hdr="$("$READELF" -lW "$so")"; dyn="$("$READELF" -dW "$so")"
     while read -r align; do
-      [ $((align)) -ge 16384 ] || { echo "elf: $n LOAD segment aligned $align (< 16 KB)"; errs=$((errs+1)); }
+      [ $((align)) -ge "$MIN_ALIGN" ] || { echo "elf: $n LOAD segment aligned $align (< $MIN_ALIGN)"; errs=$((errs+1)); }
     done < <(awk '$1=="LOAD"{print $NF}' <<<"$hdr")
     grep -q GNU_RELRO <<<"$hdr" || { echo "elf: $n has no RELRO"; errs=$((errs+1)); }
     grep -qE 'BIND_NOW|FLAGS_1.*NOW' <<<"$dyn" || { echo "elf: $n is not BIND_NOW"; errs=$((errs+1)); }
