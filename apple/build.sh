@@ -156,7 +156,8 @@ fi
 has_slices() { local s; for s in "$@"; do in_list "$s" $SLICES || return 1; done; }
 
 stage_target() { # TARGET HEADER_SLICE "SLICES" GROUP...
-  local target=$1 hslice=$2 slices=$3 st="$WORK/stage/$target" stem name s
+  local target=$1 hslice=$2 slices=$3 stem name s st
+  st="$WORK/stage/$target"
   shift 3
   log "assemble $target"
   rm -rf "$st"
