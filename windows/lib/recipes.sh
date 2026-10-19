@@ -7,7 +7,9 @@
 RECIPES="zlib bzip2 xz zstd expat
 vulkan_headers vulkan_loader spirv_cross shaderc
 lcms2 dav1d libogg opus flac libvpx libopenmpt ffmpeg
-freetype fribidi harfbuzz fontconfig libass libplacebo uchardet win_iconv libjpeg_turbo libudfread libbluray mpv"
+freetype fribidi harfbuzz fontconfig libass libplacebo uchardet win_iconv libjpeg_turbo libudfread libbluray mpv
+libspng libwebp libdeflate libtiff imath openexr cgif highway brotli libjxl libavif libraw libexif glib libvips
+libssh2 curl libsmb2 libnfs libarchive libebur128 chromaprint whisper_cpp vvdec"
 
 # ------------------------------------------------------------ compression
 
@@ -317,4 +319,247 @@ r_mpv() {
   grep -q "gpl.*false\|GPL.*disabled\|LGPL" "$B/meson-logs/meson-log.txt" || true
   license mpv "$s/LICENSE.LGPL" "$s/Copyright"
   built mpv
+}
+
+# --------------------------------------------------------------- images
+
+r_libspng() {
+  local s; s=$(fetch libspng)
+  cmake_build "$s" "$B" -DSPNG_SHARED=ON -DSPNG_STATIC=OFF -DBUILD_EXAMPLES=OFF
+  # Upstream writes libspng.pc only on non-Windows hosts.
+  cat > "$PREFIX/lib/pkgconfig/libspng.pc" <<PC
+prefix=$(w "$PREFIX")
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: libspng
+Description: PNG decoding and encoding library
+Version: $(pin libspng version)
+Requires.private: zlib
+Libs: -L\${libdir} -lspng
+Cflags: -I\${includedir}
+PC
+  license libspng "$s/LICENSE"
+  built libspng
+}
+
+r_libwebp() {
+  local s; s=$(fetch libwebp)
+  cmake_build "$s" "$B" -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
+    -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF \
+    -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF -DWEBP_BUILD_LIBWEBPMUX=ON -DWEBP_LINK_STATIC=OFF
+  license libwebp "$s/COPYING" "$s/PATENTS"
+  built libwebp
+}
+
+r_libdeflate() {
+  local s; s=$(fetch libdeflate)
+  cmake_build "$s" "$B" -DLIBDEFLATE_BUILD_SHARED_LIB=ON -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF
+  license libdeflate "$s/COPYING"
+  built libdeflate
+}
+
+r_libtiff() {
+  local s; s=$(fetch libtiff)
+  cmake_build "$s" "$B" -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF -Dtiff-opengl=OFF \
+    -Djpeg=ON -Dzlib=ON -Dlibdeflate=ON -Dwebp=ON -Dzstd=ON -Dlzma=ON -Djbig=OFF -Dlerc=OFF -Djpeg12=OFF
+  license libtiff "$s/LICENSE.md"
+  built libtiff
+}
+
+r_imath() {
+  local s; s=$(fetch imath)
+  cmake_build "$s" "$B" -DPYTHON=OFF -DIMATH_INSTALL=ON
+  license imath "$s/LICENSE.md"
+  built imath
+}
+
+# HTJ2K uses the OpenJPH copy vendored in the OpenEXR release (BSD-2-Clause).
+# OpenEXRCore uses SSE4.1 intrinsics whenever _MSC_VER is set (MSVC allows
+# that without /arch); clang-cl needs the feature enabled. Same baseline as
+# upstream MSVC builds; Windows 11 itself requires SSE4.2. CFLAGS is added to
+# the toolchain's hardened CMAKE_C_FLAGS_INIT, it does not replace it.
+r_openexr() {
+  local s; s=$(fetch openexr)
+  [ "$ARCH" = x64 ] && export CFLAGS="-msse4.1" CXXFLAGS="-msse4.1"
+  cmake_build "$s" "$B" -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_BUILD_EXAMPLES=OFF \
+    -DOPENEXR_INSTALL_DOCS=OFF -DOPENEXR_BUILD_PYTHON=OFF -DOPENEXR_FORCE_INTERNAL_IMATH=OFF \
+    -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_ZSTD=OFF -DOPENEXR_TEST_LIBRARIES=OFF \
+    -DOPENEXR_TEST_TOOLS=OFF -DOPENEXR_TEST_PYTHON=OFF
+  license openexr "$s/LICENSE.md" "$s/external/OpenJPH/LICENSE"
+  built openexr
+}
+
+r_cgif() {
+  local s; s=$(fetch cgif)
+  meson_build "$s" "$B" -Dexamples=false -Dtests=false
+  license cgif "$s/LICENSE"
+  built cgif
+}
+
+r_highway() {
+  local s; s=$(fetch highway)
+  cmake_build "$s" "$B" -DHWY_ENABLE_TESTS=OFF -DHWY_ENABLE_EXAMPLES=OFF -DHWY_ENABLE_CONTRIB=OFF -DHWY_ENABLE_INSTALL=ON
+  license highway "$s/LICENSE"
+  built highway
+}
+
+r_brotli() {
+  local s; s=$(fetch brotli)
+  cmake_build "$s" "$B" -DBROTLI_BUILD_TOOLS=OFF -DBROTLI_DISABLE_TESTS=ON
+  license brotli "$s/LICENSE"
+  built brotli
+}
+
+r_libjxl() {
+  local s; s=$(fetch libjxl)
+  cmake_build "$s" "$B" -DJPEGXL_ENABLE_TOOLS=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_MANPAGES=OFF \
+    -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF \
+    -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF \
+    -DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_DEVTOOLS=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF -DJPEGXL_ENABLE_TRANSCODE_JPEG=ON \
+    -DJPEGXL_FORCE_SYSTEM_LCMS2=ON -DJPEGXL_FORCE_SYSTEM_BROTLI=ON -DJPEGXL_FORCE_SYSTEM_HWY=ON \
+    -DJPEGXL_WARNINGS_AS_ERRORS=OFF -DJPEGXL_STATIC=OFF
+  license libjxl "$s/LICENSE" "$s/PATENTS"
+  built libjxl
+}
+
+# Decode-only AVIF through dav1d; sharpyuv from libwebp.
+r_libavif() {
+  local s; s=$(fetch libavif)
+  cmake_build "$s" "$B" -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_AOM=OFF -DAVIF_CODEC_RAV1E=OFF -DAVIF_CODEC_SVT=OFF \
+    -DAVIF_CODEC_LIBGAV1=OFF -DAVIF_LIBYUV=OFF -DAVIF_LIBSHARPYUV=SYSTEM -DAVIF_LIBXML2=OFF -DAVIF_BUILD_APPS=OFF \
+    -DAVIF_BUILD_EXAMPLES=OFF -DAVIF_BUILD_TESTS=OFF -DAVIF_BUILD_MAN_PAGES=OFF
+  license libavif "$s/LICENSE"
+  built libavif
+}
+
+r_libraw() {
+  local s; s=$(fetch libraw)
+  cmake_build "$HERE/cmake/libraw" "$B" -DLIBRAW_SRC="$(w "$s")"
+  license libraw "$s/LICENSE.CDDL" "$s/COPYRIGHT"
+  built libraw
+}
+
+r_libexif() {
+  local s; s=$(fetch libexif)
+  cmake_build "$HERE/cmake/libexif" "$B" -DLIBEXIF_SRC="$(w "$s")" -DLIBEXIF_VERSION="$(pin libexif version)"
+  license libexif "$s/COPYING"
+  built libexif
+}
+
+# pcre2 and libffi come from glib's own wraps (meson verifies their hashes);
+# both permissive and built as DLLs.
+r_glib() {
+  local s; s=$(fetch glib)
+  meson_build "$s" "$B" --wrap-mode=default -Dtests=false -Dinstalled_tests=false -Dnls=disabled \
+    -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled -Dsysprof=disabled -Dlibelf=disabled \
+    -Dpcre2:test=false -Dpcre2:grep=false
+  license glib "$s/COPYING" "$s/LICENSES/LGPL-2.1-or-later.txt"
+  local d; for d in "$s"/subprojects/pcre2-* "$s"/subprojects/libffi-* "$s"/subprojects/proxy-libintl-*; do
+    [ -d "$d" ] || continue
+    case $d in
+      *pcre2*) license pcre2 "$d/LICENCE.md" ;;
+      *libffi*) license libffi "$d/LICENSE" ;;
+      *proxy-libintl*) license proxy-libintl "$d/COPYING" ;;
+    esac
+  done
+  built glib pcre2 libffi proxy-libintl
+}
+
+r_libvips() {
+  local s fl args=(); s=$(fetch libvips)
+  fl=$(shared_meson_flags "$s" "$ROOT/flags/vips.flags"; flags_of "$HERE/flags/vips.flags")
+  mapfile -t args <<<"$fl"
+  # libvips calls close()/read() without <io.h>, where the MSVC CRT declares them.
+  MESON_EXTRA_CFLAGS="-FIio.h" meson_build "$s" "$B" "${args[@]}"
+  license libvips "$s/LICENSE"
+  built libvips
+}
+
+# -------------------------------------------------------------- network
+# OS crypto only (docs/07 rule 12): libssh2 on WinCNG, curl on Schannel/SSPI.
+
+r_libssh2() {
+  local s; s=$(fetch libssh2)
+  cmake_build "$s" "$B" -DCRYPTO_BACKEND=WinCNG -DENABLE_ECDSA_WINCNG=ON -DENABLE_ZLIB_COMPRESSION=ON \
+    -DBUILD_STATIC_LIBS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
+  license libssh2 "$s/COPYING"
+  built libssh2
+}
+
+r_curl() {
+  local s; s=$(fetch curl)
+  cmake_build "$s" "$B" -DCURL_USE_SCHANNEL=ON -DCURL_USE_OPENSSL=OFF -DCURL_USE_MBEDTLS=OFF -DCURL_USE_WOLFSSL=OFF \
+    -DCURL_USE_GNUTLS=OFF -DCURL_USE_RUSTLS=OFF -DCURL_USE_LIBSSH2=ON -DCURL_USE_LIBSSH=OFF -DCURL_USE_GSSAPI=OFF \
+    -DCURL_USE_LIBPSL=OFF -DUSE_NGHTTP2=OFF -DUSE_LIBIDN2=OFF -DUSE_WIN32_IDN=ON -DCURL_ZLIB=ON -DCURL_BROTLI=ON \
+    -DCURL_ZSTD=ON -DENABLE_UNICODE=ON -DCURL_DISABLE_LDAP=ON -DBUILD_CURL_EXE=OFF -DBUILD_STATIC_LIBS=OFF \
+    -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF -DBUILD_EXAMPLES=OFF
+  license curl "$s/COPYING"
+  built curl
+}
+
+# No Kerberos/GSSAPI; SMB3 signing and encryption use libsmb2's own code.
+r_libsmb2() {
+  local s; s=$(fetch libsmb2)
+  cmake_build "$s" "$B" -DENABLE_GSSAPI=OFF -DENABLE_LIBKRB5=OFF -DENABLE_EXAMPLES=OFF
+  license libsmb2 "$s/COPYING" "$s/LICENCE-LGPL-2.1.txt"
+  built libsmb2
+}
+
+r_libnfs() {
+  local s; s=$(fetch libnfs)
+  cmake_build "$s" "$B" -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF
+  license libnfs "$s/COPYING" "$s/LICENCE-LGPL-2.1.txt"
+  built libnfs
+}
+
+# ---------------------------------------------------------------- misc
+
+# Hashes through Windows CNG; RAR via libarchive's own reader (no unrar).
+r_libarchive() {
+  local s; s=$(fetch libarchive)
+  cmake_build "$s" "$B" -DENABLE_CNG=ON -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF \
+    -DENABLE_ZLIB=ON -DENABLE_BZip2=ON -DENABLE_LZMA=ON -DENABLE_ZSTD=ON -DENABLE_LZ4=OFF -DENABLE_LZO=OFF \
+    -DENABLE_LIBB2=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_WIN32_XMLLITE=ON -DENABLE_PCREPOSIX=OFF \
+    -DENABLE_PCRE2POSIX=OFF -DENABLE_ICONV=OFF -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF \
+    -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_WERROR=OFF
+  license libarchive "$s/COPYING"
+  built libarchive
+}
+
+r_libebur128() {
+  local s; s=$(fetch libebur128)
+  cmake_build "$s" "$B" -DENABLE_INTERNAL_QUEUE_H=ON
+  license libebur128 "$s/COPYING"
+  built libebur128
+}
+
+# FFT and resampling from the FFmpeg built above (libavutil tx, swresample).
+r_chromaprint() {
+  local s; s=$(fetch chromaprint)
+  cmake_build "$s" "$B" -DFFT_LIB=avtx -DAUDIO_PROCESSOR_LIB=swresample -DBUILD_TOOLS=OFF -DBUILD_TESTS=OFF
+  license chromaprint "$s/LICENSE.md"
+  built chromaprint
+}
+
+# CPU backends for every x86-64 level, picked at run time (ggml backend DLLs).
+r_whisper_cpp() {
+  local s cpu=(); s=$(fetch whisper.cpp)
+  if [ "$ARCH" = x64 ]; then cpu=(-DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON); fi
+  cmake_build "$s" "$B" -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_CCACHE=OFF "${cpu[@]}" \
+    -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_CURL=OFF \
+    -DWHISPER_SDL=OFF -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF
+  license whisper.cpp "$s/LICENSE"
+  built whisper.cpp
+}
+
+# VVC software decoder (BSD-3-Clause-Clear, optional in versions.json).
+# Like OpenEXR, vvdec uses SSE4.1 intrinsics in generic code whenever _MSC_VER
+# is set (SSE4.1 baseline); clang-cl needs that, and xsave for _xgetbv.
+r_vvdec() {
+  local s; s=$(fetch vvdec)
+  [ "$ARCH" = x64 ] && export CFLAGS="-msse4.1 -mxsave" CXXFLAGS="-msse4.1 -mxsave"
+  cmake_build "$s" "$B" -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF -DVVDEC_ENABLE_WERROR=OFF
+  license vvdec "$s/LICENSE.txt"
+  built vvdec
 }

@@ -47,6 +47,8 @@ MEDIAHRO_TAR=$(cygpath -w /usr/bin/tar.exe); export MEDIAHRO_TAR
 . "$HERE/lib/common.sh"
 # shellcheck source=lib/recipes.sh
 . "$HERE/lib/recipes.sh"
+# shellcheck source=lib/stage.sh
+. "$HERE/lib/stage.sh"
 
 ensure_msys_packages
 HOST_PY=$(find_python)

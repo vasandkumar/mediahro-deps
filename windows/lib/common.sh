@@ -9,7 +9,9 @@ w() { cygpath -m "$1"; }  # C:/forward/slash path for native tools
 
 ensure_msys_packages() {
   local need=()
-  for t in make perl zstd patch diff; do command -v "$t" >/dev/null 2>&1 || need+=("$t"); done
+  # MSYS2's own tools only: the inherited Windows PATH may hold Git's or
+  # Strawberry Perl's builds, which use a different runtime.
+  for t in make perl zstd patch diff; do [ -x "/usr/bin/$t.exe" ] || [ -x "/usr/bin/$t" ] || need+=("$t"); done
   [ ${#need[@]} -eq 0 ] && return 0
   command -v pacman >/dev/null || die "missing ${need[*]} and no pacman"
   log "pacman: installing make diffutils perl patch zstd"
@@ -252,12 +254,18 @@ cmake_build() {  # SRC BUILD [cmake args...]
 meson_build() {  # SRC BUILD [meson args...]
   local s=$1 b=$2 machine=("$MESON_MACHINE") f extra=""; shift 2
   rm -rf "$b"
-  if [ -n "${MESON_EXTRA_LDFLAGS:-}" ]; then
-    for f in $MESON_EXTRA_LDFLAGS; do extra="$extra, '$f'"; done
+  if [ -n "${MESON_EXTRA_LDFLAGS:-}${MESON_EXTRA_CFLAGS:-}" ]; then
+    local cextra=""
+    for f in ${MESON_EXTRA_LDFLAGS:-}; do extra="$extra, '$f'"; done
+    for f in ${MESON_EXTRA_CFLAGS:-}; do cextra="$cextra, '$f'"; done
     mkdir -p "$(dirname "$b")"
-    printf "[built-in options]\nc_link_args = base_ldflags + [%s]\ncpp_link_args = base_ldflags + [%s]\n" \
-      "${extra#, }" "${extra#, }" > "$b.ldextra.ini"
-    machine+=("${MESON_MACHINE%%=*}=$(w "$b.ldextra.ini")")
+    {
+      echo "[built-in options]"
+      printf "c_link_args = base_ldflags + [%s]\ncpp_link_args = base_ldflags + [%s]\n" "${extra#, }" "${extra#, }"
+      printf "c_args = base_cflags + ['-std:c17', %s]\n" "${cextra#, }"
+    } > "$b.extra.ini"
+    [ -n "$cextra" ] || sed -i '/^c_args/d' "$b.extra.ini"
+    machine+=("${MESON_MACHINE%%=*}=$(w "$b.extra.ini")")
   fi
   meson setup "$(w "$b")" "$(w "$s")" "${machine[@]}" \
     --prefix="$(w "$PREFIX")" --libdir=lib --bindir=bin --includedir=include "$@"

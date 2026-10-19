@@ -1,0 +1,20 @@
+# Windows additions to ../flags/vips.flags (lane B4c; docs/05 §5, §10).
+# HEIC/HEIF through WIC in the app, never libheif here. LibRaw for camera raw.
+-Draw=enabled
+-Dhighway=enabled
+-Dzlib=enabled
+-Dpng=disabled
+-Darchive=disabled
+-Dfontconfig=disabled
+-Dpangocairo=disabled
+-Drsvg=disabled
+-Dpdfium=disabled
+-Dopenjpeg=disabled
+-Dnifti=disabled
+-Duhdr=disabled
+-Dorc=disabled
+-Dquantizr=disabled
+-Dexamples=false
+-Ddocs=false
+-Dcpp-docs=false
+-Dvapi=false

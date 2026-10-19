@@ -1,0 +1,21 @@
+--- a/include/win32/win32_compat.h
++++ b/include/win32/win32_compat.h
+@@ -150,6 +150,8 @@
+ int     getpid(void);
+ int     win32_inet_pton(int af, const char * src, void * dst);
+ int     win32_poll(struct pollfd *fds, unsigned int nfsd, int timeout);
++/* mediahro-deps: file-scope declaration, so the prototype and win32_compat.c agree. */
++struct timezone;
+ int     win32_gettimeofday(struct timeval *tv, struct timezone *tz);
+ #ifdef __MINGW32__
+ # define win32_gettimeofday mingw_gettimeofday
+@@ -157,7 +159,8 @@
+
+ #define DllExport
+
+-#ifdef __MINGW32__
++/* mediahro-deps: the MSVC CRT has no strndup either; use win32_compat.c's. */
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ char* libnfs_strndup(const char *s, size_t n);
+ #define strndup libnfs_strndup
+ #endif

@@ -173,6 +173,30 @@
       "license": "Public-Domain",
       "linking": "any",
       "note": "iconv API over Windows code pages for mpv subtitle charset conversion (no libiconv on Windows)"
+    },
+    "pcre2": {
+      "version": "10.46",
+      "source": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-{version}/pcre2-{version}.tar.bz2",
+      "sha256": "15fbc5aba6beee0b17aecb04602ae39432393aba1ebd8e39b7cabf7db883299f",
+      "license": "BSD-3-Clause",
+      "linking": "any",
+      "note": "built through glib's meson wrap, which verifies this source_hash; not fetched by pins.py (linked into glib)"
+    },
+    "libffi": {
+      "version": "3.5.2",
+      "source": "https://github.com/libffi/libffi/releases/download/v{version}/libffi-{version}.tar.gz",
+      "sha256": "f3a3082a23b37c293a4fcd1053147b371f2ff91fa7ea1b2a52e335676bac82dc",
+      "license": "MIT",
+      "linking": "any",
+      "note": "built through glib's meson wrap, which verifies this source_hash; not fetched by pins.py"
+    },
+    "proxy-libintl": {
+      "version": "0.5",
+      "source": "https://github.com/frida/proxy-libintl/archive/refs/tags/{version}.tar.gz",
+      "sha256": "f7a1cbd7579baaf575c66f9d99fb6295e9b0684a28b095967cfda17857595303",
+      "license": "LGPL-2.0-or-later",
+      "linking": "dynamic",
+      "note": "built through glib's meson wrap, which verifies this source_hash; not fetched by pins.py (intl-8.dll; a stub that only forwards to an installed libintl if present)"
     }
   },
   "fallback": {
