@@ -12,3 +12,5 @@
 --enable-bzlib
 --enable-iconv
 --enable-libxml2
+# iconv lives in libiconv on Apple, not in libSystem.
+--extra-libs=-liconv

@@ -41,7 +41,7 @@ build_glib() {
   # _NSGetEnviron is private API on iOS (App Store rejection); glib only skips it
   # for the deprecated system = 'ios', so restrict it to macOS here.
   perl -0pi -e "s/if host_system == 'darwin'\n  functions \+= \['_NSGetEnviron'\]/if host_system == 'darwin' and subsystem == 'macos'\n  functions += ['_NSGetEnviron']/" "$s/meson.build"
-  grep -B1 "functions += \['_NSGetEnviron'\]" "$s/meson.build" | grep -q "subsystem == 'macos'" \
+  grep -B1 "functions += \['_NSGetEnviron'\]" "$s/meson.build" | grep "subsystem == 'macos'" >/dev/null \
     || die "glib: _NSGetEnviron patch did not apply"
   if grep -q "^  'pipe2',$" "$s/meson.build"; then die "glib: pipe2 patch did not apply"; fi
   meson_build glib "$s" -Dtests=false -Dinstalled_tests=false -Dnls=disabled -Dintrospection=disabled \

@@ -90,7 +90,7 @@ for slice in $SLICES; do
   rm -rf "$PREFIX" "$BUILD" "$SLICE_DIR/src"
   slice_env "$slice"
   for r in $RECIPES; do
-    if [ -n "$ONLY" ] && ! printf ' %s ' $ONLY | grep -q " $r "; then continue; fi
+    if [ -n "$ONLY" ] && ! in_list "$r" $ONLY; then continue; fi
     before=$(ls "$PREFIX"/lib/*.dylib 2>/dev/null || true)
     log "$r ($SLICE)"
     t0=$SECONDS
@@ -101,7 +101,7 @@ for slice in $SLICES; do
     fi
     for f in "$PREFIX"/lib/*.dylib; do
       [ -e "$f" ] && [ ! -L "$f" ] || continue
-      printf '%s\n' "$before" | grep -qxF "$f" && continue
+      [[ $'\n'"$before"$'\n' == *$'\n'"$f"$'\n'* ]] && continue
       check_dylib "$f"
       stem=$(dylib_stem "$f")
       # glib's gettext stub is its own pinned library (LGPL, dynamic).
@@ -123,7 +123,7 @@ if [ -n "$ONLY" ]; then
 fi
 
 # --- assemble xcframeworks and package ----------------------------------------
-has_slices() { local s; for s in "$@"; do printf ' %s ' $SLICES | grep -q " $s " || return 1; done; }
+has_slices() { local s; for s in "$@"; do in_list "$s" $SLICES || return 1; done; }
 
 stage_target() { # TARGET OS HEADER_SLICE GROUP...
   local target=$1 os=$2 hslice=$3 st="$WORK/stage/$target" pkgroot="$WORK/pkgroot" stem

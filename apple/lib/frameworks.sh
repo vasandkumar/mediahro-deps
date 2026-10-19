@@ -129,14 +129,14 @@ check_slice_frameworks() {
   for bin in "$out"/*.framework/*; do
     [ -f "$bin" ] && [ ! -L "$bin" ] || continue
     case $bin in *.plist) continue ;; esac
-    lipo -archs "$bin" | grep -qw "$ARCH" || { echo "wrong arch in $bin: $(lipo -archs "$bin")" >&2; bad=1; }
+    in_list "$ARCH" $(lipo -archs "$bin") || { echo "wrong arch in $bin: $(lipo -archs "$bin")" >&2; bad=1; }
     while read -r dep; do
       case $dep in
         /usr/lib/* | /System/Library/* | @rpath/*.framework/*) ;;
         *) echo "bad load command in ${bin#"$out"/}: $dep" >&2; bad=1 ;;
       esac
     done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
-    if otool -l "$bin" | grep -q "$WORK"; then
+    if otool -l "$bin" | grep -F "$WORK" >/dev/null; then
       echo "build path leaked into ${bin#"$out"/}" >&2
       bad=1
     fi

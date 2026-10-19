@@ -10,6 +10,8 @@ ALL_SLICES="ios-arm64 iossim-arm64 iossim-x86_64 macos-arm64 macos-x86_64"
 HARDEN_CFLAGS="-O2 -fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong"
 HARDEN_LDFLAGS="-Wl,-headerpad_max_install_names"
 
+# in_list WORD LIST... : true when WORD is one of LIST (no pipe, so pipefail-safe)
+in_list() { local w=$1 x; shift; for x in "$@"; do [ "$x" = "$w" ] && return 0; done; return 1; }
 log() { printf '\n==> [%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 die() { printf 'apple/build.sh: error: %s\n' "$*" >&2; exit 1; }
 
