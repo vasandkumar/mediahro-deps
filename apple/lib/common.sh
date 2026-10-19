@@ -198,6 +198,8 @@ run_logged() {
   shift
   logf="$LOGS/$SLICE-$name.log"
   if ! "$@" >>"$logf" 2>&1; then
+    echo "----- first errors in $logf -----" >&2
+    grep -n -m 12 -B 3 -A 6 -E "error:|Error:|ERROR:|FAILED:|Undefined symbols" "$logf" >&2 || true
     echo "----- last 150 lines of $logf -----" >&2
     tail -n 150 "$logf" >&2
     for f in $(find "$BUILD" -name config.log -newer "$STAMP" 2>/dev/null) \

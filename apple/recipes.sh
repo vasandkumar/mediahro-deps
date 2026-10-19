@@ -129,11 +129,12 @@ build_dav1d() {
 }
 
 build_vvdec() {
-  local s; s=$(src vvdec)
-  local simd=ON
-  # vvdec's SIMD for x86 needs SSE4.1+/AVX2 at runtime; ARM uses SIMDe.
+  local s x86=ON arm=OFF; s=$(src vvdec)
+  # vvdec's x86 kernels also build on arm64 through its bundled SIMDe; its
+  # native NEON kernels exist only for arm64.
+  if [ "$ARCH" = arm64 ]; then arm=ON; fi
   cmake_build vvdec "$s" -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF \
-    -DVVDEC_ENABLE_X86_SIMD="$simd" -DVVDEC_ENABLE_ARM_SIMD="$simd" -DVVDEC_ENABLE_WERROR=OFF
+    -DVVDEC_ENABLE_X86_SIMD="$x86" -DVVDEC_ENABLE_ARM_SIMD="$arm" -DVVDEC_ENABLE_WERROR=OFF
   license vvdec "$s/LICENSE.txt"
 }
 
