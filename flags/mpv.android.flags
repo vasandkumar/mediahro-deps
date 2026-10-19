@@ -1,9 +1,10 @@
 # mpv on Android (docs/05 §4.1): gpu-next over Vulkan or EGL, MediaCodec, AAudio / OpenSL ES / AudioTrack.
+# shaderc is only used by mpv's D3D11 backend (win32); libplacebo has its own.
 -Dandroid-media-ndk=enabled
 -Degl-android=enabled
 -Dgl=enabled
 -Dplain-gl=enabled
--Dshaderc=enabled
+-Dshaderc=disabled
 -Daaudio=enabled
 -Dopensles=enabled
 -Daudiotrack=enabled

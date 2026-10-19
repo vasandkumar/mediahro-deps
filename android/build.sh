@@ -236,7 +236,9 @@ autotools_build() {  # autotools_build <name> [configure options...]  (in a copy
   should_build "$name" "${opts[@]}" || return 0
   local b="$BUILD/$name"; rm -rf "$b"; cp -a "$SRC/$name" "$b"
   (cd "$b" && CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" CPPFLAGS="-I$PREFIX/include" \
-     LDFLAGS="$LDHARDEN -L$PREFIX/lib" ./configure "${opts[@]}")
+     LDFLAGS="$LDHARDEN -L$PREFIX/lib" LIBS="$("$CC" -print-libgcc-file-name)" ./configure "${opts[@]}")
+  # libtool links C++ libraries with -nostdlib: the compiler-rt builtins (LIBS above) keep
+  # outline atomics and other helpers inside the library instead of leaving them undefined.
   unversion_libtool "$b"
   make -C "$b" -j "$JOBS"
   make -C "$b" install
@@ -361,12 +363,18 @@ recipes() {
 
   # Blu-ray (unencrypted BDMV only; no BD-J)
   meson_build libudfread
-  meson_build libbluray -Dbdj_jar=disabled -Djava9=false -Denable_tools=false -Denable_devtools=false -Denable_docs=false \
+  meson_build libbluray -Dbdj_jar=disabled -Denable_tools=false -Denable_devtools=false -Denable_examples=false -Denable_docs=false \
     -Dfreetype=enabled -Dfontconfig=enabled -Dlibxml2=disabled -Dembed_udfread=false
 
   # mpv (libmpv only)
   mapfile -t MPV_FLAGS < <(flags mpv.flags; flags mpv.android.flags)
   meson_build mpv "${MPV_FLAGS[@]}"
+
+  # Archives (libvips dzsave/archive loader and the app's archive browser)
+  cmake_build libarchive -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF \
+    -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_CNG=OFF \
+    -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF \
+    -DENABLE_ICONV=ON -DENABLE_ZSTD=ON -DENABLE_LZMA=ON -DENABLE_BZip2=ON -DENABLE_ZLIB=ON -DENABLE_WERROR=OFF
 
   # Image pipeline
   cmake_build libspng -DSPNG_SHARED=ON -DSPNG_STATIC=OFF -DBUILD_EXAMPLES=OFF
@@ -401,10 +409,6 @@ recipes() {
     -DUSE_NGHTTP2=OFF -DUSE_NGTCP2=OFF -DCURL_BROTLI=ON -DCURL_ZSTD=ON -DCURL_ZLIB=ON -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
     -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF -DCURL_DISABLE_LDAP=ON -DCURL_DISABLE_LDAPS=ON \
     -DENABLE_ARES=OFF -DCURL_CA_BUNDLE=none -DCURL_CA_PATH=none -DBUILD_STATIC_LIBS=OFF
-  cmake_build libarchive -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF \
-    -DENABLE_LZO=OFF -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_CNG=OFF \
-    -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_ACL=OFF -DENABLE_XATTR=OFF \
-    -DENABLE_ICONV=ON -DENABLE_ZSTD=ON -DENABLE_LZMA=ON -DENABLE_BZip2=ON -DENABLE_ZLIB=ON -DENABLE_WERROR=OFF
 
   # Audio analysis and speech
   cmake_build libebur128 -DBUILD_STATIC_LIBS=OFF -DENABLE_TESTS=OFF
@@ -432,6 +436,8 @@ check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unver
     grep -qE 'BIND_NOW|FLAGS_1.*NOW' <<<"$dyn" || { echo "elf: $n is not BIND_NOW"; errs=$((errs+1)); }
     if grep -E 'GNU_STACK' <<<"$hdr" | grep -q 'RWE'; then echo "elf: $n has an executable stack"; errs=$((errs+1)); fi
     grep -q TEXTREL <<<"$dyn" && { echo "elf: $n has text relocations"; errs=$((errs+1)); }
+    local undef; undef="$("$NM" -D --undefined-only "$so" | awk '{print $NF}' | grep -E '^__(aarch64_|emutls_|clear_cache$)' | head -3 || true)"
+    [ -z "$undef" ] || { echo "elf: $n leaves compiler-rt builtins undefined: $undef"; errs=$((errs+1)); }
     local soname; soname="$(sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p' <<<"$dyn")"
     [ "$soname" = "$n" ] || { echo "elf: $n SONAME is '$soname'"; errs=$((errs+1)); }
     local need
