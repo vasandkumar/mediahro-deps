@@ -67,7 +67,8 @@ def dump(data: dict) -> None:
         else:
             lines.append(f"  {json.dumps(k)}: {json.dumps(data[k], ensure_ascii=False)}{comma}")
     lines.append("}")
-    VERSIONS.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with open(VERSIONS, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def expand(template: str, lib: dict) -> str:
@@ -205,7 +206,7 @@ def fetch_key(fpr: str, key: str) -> None:
             continue
         if "BEGIN PGP PUBLIC KEY BLOCK" in text:
             KEYS.mkdir(exist_ok=True)
-            (KEYS / f"{key}.asc").write_text(text, encoding="utf-8")
+            (KEYS / f"{key}.asc").write_bytes(text.replace("\r\n", "\n").encode("utf-8"))
             out = subprocess.run(["gpg", "--batch", "--show-keys", "--with-fingerprint", str(KEYS / f"{key}.asc")],
                                  capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
             print(f"  fetched key {key} ({fpr}) from {url.split('/')[2]}:\n" + "\n".join("    " + line for line in out.splitlines()))
