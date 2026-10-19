@@ -2,9 +2,6 @@
 # Only the features listed here or in mpv.flags are built; nothing is auto-detected.
 --auto-features=disabled
 -Dbuild-date=false
--Dtests=false
--Dfuzzers=false
--Dcplugins=disabled
 -Diconv=enabled
 -Dzlib=enabled
 -Djpeg=enabled

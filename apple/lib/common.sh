@@ -15,44 +15,75 @@ in_list() { local w=$1 x; shift; for x in "$@"; do [ "$x" = "$w" ] && return 0; 
 log() { printf '\n==> [%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 die() { printf 'apple/build.sh: error: %s\n' "$*" >&2; exit 1; }
 
-# --- pins -------------------------------------------------------------------
+# --- pinned sources -----------------------------------------------------------
+# ../scripts/sources.py fetches every source pinned in ../versions.json, checks
+# its SHA-256 (and OpenPGP signature where upstream signs) and only then
+# extracts it to $SOURCES/<name>; build.sh runs it once before the slices.
 
-pin_field() { # name column(1=name 2=version 3=sha256 4=url 5=license)
-  awk -F'\t' -v n="$1" -v c="$2" '$1 == n { print $c; found = 1 } END { if (!found) exit 1 }' "$PINS_TSV" \
-    || die "no pin for $1"
+pin_field() { # NAME COLUMN (2 = version, 3 = commit) from versions.json
+  awk -F'\t' -v n="$1" -v c="$2" '$1 == n { print $c; found = 1 } END { if (!found) exit 1 }' "$VERSIONS_TSV" \
+    || die "$1 is not in versions.json"
 }
 pin_version() { pin_field "$1" 2; }
+pin_commit() { pin_field "$1" 3; }
 
-# fetch NAME -> path of the verified archive in the download cache
-fetch() {
-  local name=$1 url sha file
-  url=$(pin_field "$name" 4)
-  sha=$(pin_field "$name" 3)
-  [ -n "$url" ] && [ -n "$sha" ] || die "$name is not pinned"
-  file="$CACHE/$name-$(pin_version "$name")-${url##*/}"
-  if [ ! -f "$file" ]; then
-    log "download $name $(pin_version "$name")"
-    curl -fsSL --retry 5 --retry-delay 5 --connect-timeout 30 -o "$file.part" "$url" || die "download failed: $url"
-    mv "$file.part" "$file"
-  fi
-  local got
-  got=$(shasum -a 256 "$file" | cut -d' ' -f1)
-  if [ "$got" != "$sha" ]; then
-    rm -f "$file"
-    die "SHA-256 mismatch for $name: expected $sha, got $got ($url)"
-  fi
-  printf '%s\n' "$file"
-}
-
-# src NAME -> fresh source tree for this slice (verified before extracting)
+# src NAME -> fresh copy of the verified source tree for this slice
 src() {
-  local name=$1 archive dir
-  archive=$(fetch "$name")
+  local name=$1 dir
+  [ -d "$SOURCES/$name" ] || die "source of $name was not fetched (versions.json / sources.py)"
   dir="$SLICE_DIR/src/$name"
   rm -rf "$dir"
-  mkdir -p "$dir"
-  tar -xf "$archive" -C "$dir" --strip-components=1 || die "extract failed: $archive"
+  mkdir -p "$SLICE_DIR/src"
+  cp -R "$SOURCES/$name" "$dir"
+  rm -f "$dir/.mediahro-sha256" "$dir/.mediahro-commit"
   printf '%s\n' "$dir"
+}
+
+# --- build-info (manifest.json input, see ../scripts/package.py) --------------
+# Recipes add their own options to STEP_ARGS (the meson/CMake/autotools
+# wrappers do it for them); finish() scans the compiled sources for GPL-only
+# files and writes build-info/<name>.json for this slice.
+
+STEP_ARGS=()
+record_args() { STEP_ARGS+=("$@"); }
+
+# finish NAME BUILD_DIR SRC_DIR [COMPILED_INTO]: scans $SCAN_LIBS (default: the
+# dylibs new in this step), which become the build-info files unless COMPILED_INTO
+finish() {
+  local name=$1 bdir=$2 sdir=$3 into=${4:-} libs=${SCAN_LIBS-${NEW_DYLIBS:-}} files=() f
+  if [ -z "$into" ]; then
+    for f in $libs; do files+=("$(dylib_stem "$f").framework"); done
+  fi
+  mkdir -p "$SLICE_DIR/scan" "$SLICE_DIR/build-info"
+  # shellcheck disable=SC2086
+  python3 "$ROOT/scripts/source_scan.py" "$name" "$sdir" "$bdir" "$SLICE_DIR/scan/$name.json" $libs \
+    >>"$LOGS/$SLICE-scan.log" 2>&1 || { cat "$SLICE_DIR/scan/$name.json" >&2 2>/dev/null; die "GPL-only sources compiled into $name ($SLICE)"; }
+  python3 - "$SLICE_DIR/build-info/$name.json" "$name" "$SLICE_DIR/scan/$name.json" "$into" "$WORK" "$SLICE" \
+    "${files[*]:-}" "${STEP_ARGS[@]}" <<'PY'
+import json, sys
+out, name, scan, into, work, slice_, files, *args = sys.argv[1:]
+s = json.load(open(scan))
+# Configure lines are shown in the app's About screen: no machine paths.
+args = [a.replace(work + "/" + slice_, "$SLICE").replace(work, "$WORK") for a in args]
+info = {"name": name, "configure": args, "files": files.split(),
+        "files_scanned": s["files_scanned"], "gpl_only_sources": s["gpl_only_sources"],
+        "gpl_with_exception_sources": s["gpl_with_exception_sources"]}
+if into:
+    info["compiled_into"] = into
+json.dump(info, open(out, "w"), indent=2)
+PY
+}
+
+# header_only NAME CONSUMER : build-info for headers / generated code compiled into a consumer
+header_only() {
+  mkdir -p "$SLICE_DIR/build-info"
+  python3 - "$SLICE_DIR/build-info/$1.json" "$1" "$2" <<'PY'
+import json, sys
+out, name, into = sys.argv[1:]
+json.dump({"name": name, "configure": [f"headers / generated code used by {into}"], "files": [],
+           "compiled_into": into, "files_scanned": 0, "gpl_only_sources": [],
+           "gpl_with_exception_sources": []}, open(out, "w"), indent=2)
+PY
 }
 
 # --- licences ---------------------------------------------------------------
@@ -221,6 +252,7 @@ meson_build() {
   shift 2
   b="$BUILD/$name"
   rm -rf "$b"
+  record_args "$@"
   run_logged "$name" env -u CC -u CXX -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CPPFLAGS \
     meson setup "$b" "$srcdir" --cross-file "$SLICE_DIR/cross.ini" \
     --prefix "$PREFIX" --libdir lib --buildtype release -Db_ndebug=if-release \
@@ -235,6 +267,7 @@ cmake_build() {
   shift 2
   b="$BUILD/$name"
   rm -rf "$b"
+  record_args "$@"
   if [ "$OS" = ios ]; then
     sys=(-DCMAKE_SYSTEM_NAME=iOS)
   elif [ "$NATIVE" = 0 ]; then
@@ -295,6 +328,7 @@ autotools_build() {
   local name=$1 srcdir=$2
   shift 2
   host_args
+  record_args "$@"
   (cd "$srcdir" && run_logged "$name" autotools_env ./configure --prefix="$PREFIX" "${HOST_ARGS[@]}" \
     --enable-shared --disable-static "$@")
   run_logged "$name" make -C "$srcdir" -j "$JOBS"

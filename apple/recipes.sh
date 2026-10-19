@@ -3,10 +3,31 @@
 # Every library is built shared so it can become its own .framework.
 
 RECIPES="libffi pcre2 glib expat brotli highway libogg opus flac libvpx dav1d vvdec
-freetype fribidi harfbuzz libass lcms2 libjpeg-turbo libspng libwebp libtiff imath openexr
-cgif libexif libjxl libavif libraw uchardet libebur128 libbluray libopenmpt libsmb2 libnfs
-curl libarchive chromaprint whisper.cpp libvips vulkan-headers moltenvk shaderc libplacebo
-ffmpeg mpv"
+freetype fribidi harfbuzz libass lcms2 libjpeg-turbo libspng libwebp libdeflate zstd xz libtiff
+imath openexr cgif libexif libjxl libavif libraw uchardet libebur128 libudfread libbluray
+libopenmpt libsmb2 libnfs curl libarchive chromaprint whisper.cpp libvips vulkan-headers
+moltenvk shaderc libplacebo ffmpeg mpv"
+
+# new_dylibs GLOB : dylibs installed by the current recipe whose name matches GLOB
+new_dylibs() {
+  local f out=""
+  for f in "$PREFIX"/lib/$1; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [[ $'\n'"$BEFORE_DYLIBS"$'\n' == *$'\n'"$f"$'\n'* ]] && continue
+    out+="${f##*/} "
+  done
+  printf '%s\n' "$out"
+}
+
+# scan_into NAME SRC_DIR BUILD_DIR CONSUMER_GLOB : build-info for a pinned
+# library compiled into another library's dylib (not a framework of its own)
+scan_into() {
+  local name=$1 sdir=$2 bdir=$3 libs
+  libs=$(new_dylibs "$4")
+  [ -n "${libs// /}" ] || die "scan_into $name: no dylib matches $4"
+  (STEP_ARGS=("compiled into $(dylib_stem "${libs%% *}")"); SCAN_LIBS="$libs" \
+    finish "$name" "$bdir" "$sdir" "$(dylib_stem "${libs%% *}").framework")
+}
 
 # --- glib (libvips dependency) ------------------------------------------------
 
@@ -28,12 +49,10 @@ build_pcre2() {
 }
 
 build_glib() {
-  local s wrapdir; s=$(src glib)
-  # proxy-libintl (glib's gettext stub, LGPL) comes from glib's own wrap; place the
-  # pinned, verified tarball in meson's package cache so nothing is downloaded.
-  wrapdir="$s/subprojects/packagecache"
-  mkdir -p "$wrapdir"
-  cp "$(fetch proxy-libintl)" "$wrapdir/proxy-libintl-$(pin_version proxy-libintl).tar.gz"
+  local s intl; s=$(src glib)
+  # proxy-libintl (glib's gettext stub, LGPL) is glib's meson subproject; the
+  # pinned, verified tree goes where glib's wrap expects it, so nothing is downloaded.
+  cp -R "$(src proxy-libintl)" "$s/subprojects/proxy-libintl-$(pin_version proxy-libintl)"
   # The 26 SDKs' libSystem stubs export pipe2 without declaring it for older
   # deployment targets, so meson's link test finds it although it does not
   # exist on iOS 16 / macOS 12.
@@ -50,6 +69,12 @@ build_glib() {
     -Dforce_fallback_for=proxy-libintl
   license glib "$s/LICENSES/LGPL-2.1-or-later.txt"
   license proxy-libintl "$s/subprojects/proxy-libintl-$(pin_version proxy-libintl)/COPYING"
+  # libintl is its own LGPL dylib (framework): separate build-info.
+  intl=$(new_dylibs 'libintl*.dylib')
+  [ -n "${intl// /}" ] || die "glib did not build proxy-libintl as a dylib"
+  CLAIMED+=" $intl"
+  (STEP_ARGS=("glib meson subproject" "-Ddefault_library=shared"); SCAN_LIBS="$intl" \
+    finish proxy-libintl "$BUILD/glib" "$s/subprojects/proxy-libintl-$(pin_version proxy-libintl)")
 }
 
 build_expat() {
@@ -111,6 +136,7 @@ build_libvpx() {
     macos-x86_64) target=x86_64-darwin21-gcc; cflags="-mmacosx-version-min=$MACOS_MIN $HARDEN_CFLAGS" ;;
   esac
   if [ "$ARCH" = x86_64 ]; then extra+=(--as=nasm); else extra+=(--disable-sve --disable-sve2); fi
+  record_args --target="$target" --enable-pic --enable-vp8 --enable-vp9 --enable-vp9-highbitdepth --enable-multithread "${extra[@]}"
   (cd "$s" && run_logged libvpx env CC="$CC_BIN$tc" CXX="$CXX_BIN$tc" AR="$AR_BIN" LD="$CC_BIN$tc" \
     NASM="$NASM" PATH="$(dirname "$NASM"):$PATH" \
     ./configure --target="$target" --prefix="$PREFIX" --enable-static --disable-shared --enable-pic \
@@ -201,10 +227,32 @@ build_libwebp() {
   license libwebp "$s/COPYING" "$s/PATENTS"
 }
 
+build_libdeflate() {
+  local s; s=$(src libdeflate)
+  cmake_build libdeflate "$s" -DLIBDEFLATE_BUILD_STATIC_LIB=OFF -DLIBDEFLATE_BUILD_SHARED_LIB=ON \
+    -DLIBDEFLATE_BUILD_GZIP=OFF -DLIBDEFLATE_BUILD_TESTS=OFF -DLIBDEFLATE_APPLE_FRAMEWORK=OFF
+  license libdeflate "$s/COPYING"
+}
+
+build_zstd() {
+  local s; s=$(src zstd)
+  cmake_build zstd "$s/build/cmake" -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF -DZSTD_BUILD_STATIC=OFF \
+    -DZSTD_BUILD_SHARED=ON -DZSTD_LEGACY_SUPPORT=OFF -DZSTD_MULTITHREAD_SUPPORT=ON
+  license zstd "$s/LICENSE"
+}
+
+build_xz() {
+  local s; s=$(src xz)
+  cmake_build xz "$s" -DXZ_NLS=OFF -DXZ_DOC=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF \
+    -DXZ_TOOL_LZMAINFO=OFF -DXZ_TOOL_XZ=OFF -DXZ_TOOL_SCRIPTS=OFF -DXZ_TOOL_SYMLINKS=OFF \
+    -DXZ_TOOL_SYMLINKS_LZMA=OFF -DXZ_DOXYGEN=OFF
+  license xz "$s/COPYING" "$s/COPYING.0BSD"
+}
+
 build_libtiff() {
   local s; s=$(src libtiff)
   cmake_build libtiff "$s" -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF \
-    -Dtiff-deprecated=OFF -Dcxx=OFF -Djbig=OFF -Dlerc=OFF -Dlzma=OFF -Dzstd=OFF -Dlibdeflate=OFF \
+    -Dtiff-deprecated=OFF -Dcxx=OFF -Djbig=OFF -Dlerc=OFF -Dlzma=ON -Dzstd=ON -Dlibdeflate=ON \
     -Dwebp=ON -Djpeg=ON -Dzlib=ON -Dpixarlog=ON -Dold-jpeg=OFF -Djpeg12=OFF -Dtiff-framework=OFF
   license libtiff "$s/LICENSE.md"
 }
@@ -217,11 +265,12 @@ build_imath() {
 
 build_openexr() {
   local s; s=$(src openexr)
-  # Uses its vendored libdeflate, zstd and OpenJPH (external/), never a download.
+  # libdeflate and zstd are ours; OpenJPH (HTJ2K) is vendored in OpenEXR's own
+  # tarball (external/OpenJPH) and compiled into OpenEXRCore. Never a download.
   cmake_build openexr "$s" -DOPENEXR_LIB_SUFFIX= -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF \
     -DOPENEXR_BUILD_EXAMPLES=OFF -DOPENEXR_BUILD_PYTHON=OFF -DOPENEXR_TEST_LIBRARIES=OFF \
     -DOPENEXR_TEST_TOOLS=OFF -DOPENEXR_TEST_PYTHON=OFF -DOPENEXR_INSTALL_PKG_CONFIG=ON \
-    -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=ON -DOPENEXR_FORCE_INTERNAL_ZSTD=ON \
+    -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_ZSTD=OFF \
     -DOPENEXR_FORCE_INTERNAL_OPENJPH=ON -DOPENEXR_BUILD_OSS_FUZZ=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=ON
   license openexr "$s/LICENSE.md"
 }
@@ -298,16 +347,24 @@ build_whisper.cpp() {
 
 # --- media sources --------------------------------------------------------------
 
+build_libudfread() {
+  local s; s=$(src libudfread)
+  meson_build libudfread "$s" -Denable_examples=false
+  license libudfread "$s/COPYING"
+}
+
 build_libbluray() {
   local s; s=$(src libbluray)
   if [ "$OS" = ios ]; then
     # DiskArbitration (disc mount lookup) is macOS-only: iOS uses the generic stub.
     cp "$s/src/file/mount.c" "$s/src/file/mount_darwin.c"
-    sed -i '' 's/ -framework DiskArbitration//' "$s/configure"
+    perl -0pi -e "s/modules: \['CoreFoundation', 'DiskArbitration'\]/modules: ['CoreFoundation']/" "$s/meson.build"
+    if grep -q DiskArbitration "$s/meson.build"; then die "libbluray: DiskArbitration patch did not apply"; fi
   fi
-  # Unencrypted BDMV only: no libaacs/libbdplus, no BD-J (Java).
-  autotools_build libbluray "$s" --disable-bdjava-jar --disable-examples --disable-doxygen-doc \
-    --without-libxml2 --without-freetype --without-fontconfig
+  # Unencrypted BDMV only: no libaacs/libbdplus are shipped, no BD-J (Java).
+  meson_build libbluray "$s" -Denable_docs=false -Denable_tools=false -Denable_devtools=false \
+    -Denable_examples=false -Dbdj_jar=disabled -Dembed_udfread=false -Dfontconfig=disabled \
+    -Dfreetype=disabled -Dlibxml2=disabled
   license libbluray "$s/COPYING"
 }
 
@@ -340,7 +397,7 @@ build_curl() {
   # (URLSession / Network.framework) via the app's stream callbacks, so curl is
   # built without any TLS library (docs/05 4.1, docs/07 rule 12).
   cmake_build curl "$s" -DCURL_ENABLE_SSL=OFF -DCURL_USE_OPENSSL=OFF -DCURL_USE_LIBSSH2=OFF \
-    -DCURL_USE_LIBSSH=OFF -DCURL_USE_LIBPSL=OFF -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DUSE_NGHTTP2=OFF \
+    -DCURL_USE_LIBSSH=OFF -DCURL_USE_LIBPSL=OFF -DCURL_BROTLI=ON -DCURL_ZSTD=ON -DUSE_NGHTTP2=OFF \
     -DUSE_LIBIDN2=OFF -DCURL_DISABLE_LDAP=ON -DCURL_DISABLE_LDAPS=ON -DBUILD_CURL_EXE=OFF \
     -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF -DENABLE_CURL_MANUAL=OFF -DCURL_ZLIB=ON \
     -DUSE_APPLE_IDN=ON -DBUILD_EXAMPLES=OFF -DCURL_CA_PATH=none -DCURL_CA_BUNDLE=none
@@ -351,7 +408,7 @@ build_libarchive() {
   local s; s=$(src libarchive)
   # Digests via CommonCrypto (OS); no OpenSSL/mbedTLS/Nettle.
   cmake_build libarchive "$s" -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF \
-    -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LZMA=OFF -DENABLE_ZSTD=OFF \
+    -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF -DENABLE_LZO=OFF -DENABLE_LZMA=ON -DENABLE_ZSTD=ON \
     -DENABLE_BZip2=ON -DENABLE_ZLIB=ON -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_ICONV=ON \
     -DENABLE_ACL=OFF -DENABLE_XATTR=OFF -DENABLE_TAR=OFF -DENABLE_CPIO=OFF -DENABLE_CAT=OFF \
     -DENABLE_UNZIP=OFF -DENABLE_TEST=OFF -DENABLE_WERROR=OFF -DENABLE_INSTALL=ON
@@ -378,18 +435,22 @@ build_vulkan-headers() {
   local s; s=$(src vulkan-headers)
   cmake_build vulkan-headers "$s" -DVULKAN_HEADERS_ENABLE_TESTS=OFF -DVULKAN_HEADERS_ENABLE_MODULE=OFF
   license vulkan-headers "$s/LICENSE.md"
+  header_only vulkan-headers "libMoltenVK, libplacebo, libmpv, libavutil (include/vulkan)"
 }
 
 build_moltenvk() {
-  local s ver; s=$(src moltenvk)
+  local s sc ver; s=$(src moltenvk); sc=$(src spirv-cross)
   ver=$(sed -n 's/^#define VK_HEADER_VERSION \([0-9]*\).*/\1/p' "$PREFIX/include/vulkan/vulkan_core.h")
-  [ "$(cat "$s/ExternalRevisions/Vulkan-Headers_repo_revision")" = "$(pin_version vulkan-headers)" ] \
-    || die "vulkan-headers pin differs from MoltenVK's ExternalRevisions"
-  # SPIRV-Cross/Tools/Headers, Volk and cereal are fetched by CPM at the git
-  # commits in MoltenVK's ExternalRevisions; Vulkan-Headers is our verified copy.
+  # Vulkan-Headers and SPIRV-Cross are the verified versions.json pins (CPM uses
+  # them instead of cloning). SPIRV-Tools only adds debug disassembly: left out.
+  # cereal (pipeline-cache serialisation, header-only) is still fetched by CPM
+  # at the git commit in MoltenVK's ExternalRevisions.
   cmake_build moltenvk "$s" -DCPM_SOURCE_CACHE="$CACHE/cpm" -DCPM_Vulkan-Headers_SOURCE="$(vk_headers_dir)" \
+    -DCPM_SPIRV-Cross_SOURCE="$sc" -DMVK_EXCLUDE_SPIRV_TOOLS=ON \
     -DMVK_USE_METAL_PRIVATE_API=OFF -DMVK_BUILD_SHADER_CONVERTER_TOOL=OFF -DMVK_CONFIG_LOG_LEVEL=warn \
     -DMOLTEN_VK_WITH_CCACHE=OFF
+  scan_into spirv-cross "$sc" "$BUILD/moltenvk" 'libMoltenVK*.dylib'
+  license spirv-cross "$sc/LICENSE"
   cat >"$PREFIX/lib/pkgconfig/vulkan.pc" <<EOF
 prefix=$PREFIX
 includedir=\${prefix}/include
@@ -402,24 +463,21 @@ Libs: -L\${libdir} -lMoltenVK
 Cflags: -I\${includedir}
 EOF
   license moltenvk "$s/LICENSE"
-  local cpm d
-  for d in "$CACHE"/cpm/*/; do
-    for cpm in "$d"*/LICENSE* "$d"*/LICENSE.txt; do
-      if [ -f "$cpm" ]; then
-        license "moltenvk-$(basename "$d" | tr '[:upper:]' '[:lower:]')" "$cpm"
-        break
-      fi
-    done
-  done
+  local cereal
+  cereal=$(find "$CACHE/cpm" -maxdepth 3 -name LICENSE -path '*cereal*' | head -1)
+  [ -n "$cereal" ] || die "MoltenVK: cereal licence not found in the CPM cache"
+  # Appended to MoltenVK's licence file: cereal is compiled into libMoltenVK.
+  { printf '==> cereal (compiled into libMoltenVK, commit %s) <==\n' "$(cat "$s/ExternalRevisions/cereal_repo_revision")"
+    cat "$cereal"; } >>"$LICENSES/moltenvk.txt"
 }
 
 build_shaderc() {
   local s g t h; s=$(src shaderc)
   g=$(src glslang); t=$(src spirv-tools); h=$(src spirv-headers)
   # Commits must match shaderc's DEPS so the sources are the ones shaderc tested.
-  grep -q "'glslang_revision': '$(pin_version glslang)'" "$s/DEPS" || die "glslang pin differs from shaderc DEPS"
-  grep -q "'spirv_tools_revision': '$(pin_version spirv-tools)'" "$s/DEPS" || die "spirv-tools pin differs from shaderc DEPS"
-  grep -q "'spirv_headers_revision': '$(pin_version spirv-headers)'" "$s/DEPS" || die "spirv-headers pin differs from shaderc DEPS"
+  grep -q "'glslang_revision': '$(pin_commit glslang)'" "$s/DEPS" || die "glslang pin differs from shaderc DEPS"
+  grep -q "'spirv_tools_revision': '$(pin_commit spirv-tools)'" "$s/DEPS" || die "spirv-tools pin differs from shaderc DEPS"
+  grep -q "'spirv_headers_revision': '$(pin_commit spirv-headers)'" "$s/DEPS" || die "spirv-headers pin differs from shaderc DEPS"
   rm -rf "$s/third_party/glslang" "$s/third_party/spirv-tools" "$s/third_party/spirv-headers"
   mv "$g" "$s/third_party/glslang"
   mv "$t" "$s/third_party/spirv-tools"
@@ -438,21 +496,30 @@ build_shaderc() {
   license glslang "$s/third_party/glslang/LICENSE.txt"
   license spirv-tools "$s/third_party/spirv-tools/LICENSE"
   license spirv-headers "$s/third_party/spirv-headers/LICENSE"
+  local x
+  for x in glslang spirv-tools spirv-headers; do
+    scan_into "$x" "$s/third_party/$x" "$BUILD/shaderc" 'libshaderc_shared*.dylib'
+  done
 }
 
 build_libplacebo() {
-  local s ff; s=$(src libplacebo)
-  # Submodules are not in the release tarball: fast_float (headers) and
-  # Vulkan-Headers come from their own pins; jinja2 is a build-time tool (pip).
-  ff=$(src fast_float)
-  rm -rf "$s/3rdparty/fast_float" "$s/3rdparty/Vulkan-Headers"
+  local s ff gl; s=$(src libplacebo)
+  # Submodules are not in the release tarball: fast_float (headers), glad (GL
+  # loader generator) and Vulkan-Headers come from their own pins; jinja2 is a
+  # build-time tool (pip).
+  ff=$(src fast_float); gl=$(src glad)
+  rm -rf "$s/3rdparty/fast_float" "$s/3rdparty/glad" "$s/3rdparty/Vulkan-Headers"
   mv "$ff" "$s/3rdparty/fast_float"
+  mv "$gl" "$s/3rdparty/glad"
   cp -R "$(vk_headers_dir)" "$s/3rdparty/Vulkan-Headers"
   read_flags "$ROOT/flags/libplacebo.flags"; local common=("${FLAGS[@]}")
   read_flags "$APPLE/flags/libplacebo.apple.flags"
   meson_build libplacebo "$s" "${common[@]}" "${FLAGS[@]}"
   license libplacebo "$s/LICENSE"
-  license fast_float "$s/3rdparty/fast_float/LICENSE-MIT"
+  license fast_float "$s/3rdparty/fast_float/LICENSE-MIT" "$s/3rdparty/fast_float/LICENSE-APACHE" "$s/3rdparty/fast_float/LICENSE-BOOST"
+  license glad "$s/3rdparty/glad/LICENSE"
+  header_only fast_float libplacebo
+  header_only glad "libplacebo (generated OpenGL loader)"
 }
 
 # --- FFmpeg and mpv ------------------------------------------------------------------
@@ -472,6 +539,7 @@ build_ffmpeg() {
     common+=("$f")
   done
   read_flags "$ROOT/flags/ffmpeg.apple.flags"; local apple=("${FLAGS[@]}")
+  record_args --target-os=darwin "${common[@]}" "${apple[@]}"
   case $ARCH in arm64) arch=aarch64 ;; x86_64) arch=x86_64 ;; esac
   b="$BUILD/ffmpeg"
   rm -rf "$b"; mkdir -p "$b"
