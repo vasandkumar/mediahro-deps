@@ -137,7 +137,8 @@ check_slice_frameworks() {
       esac
     done < <(otool -L "$bin" | tail -n +2 | awk '{print $1}')
     if otool -l "$bin" | grep -F "$WORK" >/dev/null; then
-      echo "build path leaked into ${bin#"$out"/}" >&2
+      echo "build path leaked into ${bin#"$out"/}:" >&2
+      otool -l "$bin" | grep -n -B4 -F "$WORK" >&2 || true
       bad=1
     fi
   done
