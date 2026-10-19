@@ -4,6 +4,14 @@
     "https://download.videolan.org/pub/videolan/": [
       "https://ftp.osuosl.org/pub/videolan/",
       "https://mirror.netcologne.de/videolan.org/"
+    ],
+    "https://download.savannah.gnu.org/releases/": [
+      "https://download-mirror.savannah.gnu.org/releases/"
+    ]
+  },
+  "source_mirrors": {
+    "freetype": [
+      "https://downloads.sourceforge.net/project/freetype/freetype2/{version}/freetype-{version}.tar.xz"
     ]
   },
   "toolchain": {

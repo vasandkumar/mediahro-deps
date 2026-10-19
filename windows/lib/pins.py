@@ -80,9 +80,12 @@ def _download(e: dict, cache: Path) -> Path:
         return dest
     tmp = dest.with_suffix(dest.suffix + ".part")
     urls = [e["url"]]
-    for prefix, alts in _load()[1].get("mirrors", {}).items():
+    deps = _load()[1]
+    for prefix, alts in deps.get("mirrors", {}).items():
         if e["url"].startswith(prefix):
             urls += [a + e["url"][len(prefix):] for a in alts]
+    # Per-source mirror templates (same bytes; the SHA-256 check still applies).
+    urls += [_expand(t, e["version"]) for t in deps.get("source_mirrors", {}).get(e["name"], [])]
     errors = []
     for attempt in range(6):
         for url in urls:
