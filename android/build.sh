@@ -243,13 +243,19 @@ autotools_build() {  # autotools_build <name> [configure options...]  (in a copy
   local opts=(--host="$HOST" --prefix="$PREFIX" --libdir="$PREFIX/lib" --enable-shared --disable-static --with-pic "$@")
   should_build "$name" "${opts[@]}" || return 0
   local b="$BUILD/$name"; rm -rf "$b"; cp -a "$SRC/$name" "$b"
-  (cd "$b" && CFLAGS="-O$(opt_level "$name") $HARDEN" CXXFLAGS="-O$(opt_level "$name") $HARDEN" CPPFLAGS="-I$PREFIX/include" \
+  # -MD: every compile leaves a depfile for source_scan.py, also in hand-written Makefiles (libiconv).
+  (cd "$b" && CFLAGS="-O$(opt_level "$name") $HARDEN -MD" CXXFLAGS="-O$(opt_level "$name") $HARDEN -MD" CPPFLAGS="-I$PREFIX/include" \
      LDFLAGS="$LDHARDEN -L$PREFIX/lib" LIBS="$("$CC" -print-libgcc-file-name)" ./configure "${opts[@]}")
   # libtool links C++ libraries with -nostdlib: the compiler-rt builtins (LIBS above) keep
   # outline atomics and other helpers inside the library instead of leaving them undefined.
   unversion_libtool "$b"
-  make -C "$b" -j "$JOBS"
-  make -C "$b" install
+  # AUTOTOOLS_SUBDIRS limits the build to library directories (libiconv: not its GPL `iconv` program).
+  local d
+  for d in ${AUTOTOOLS_SUBDIRS:-.}; do
+    make -C "$b/$d" -j "$JOBS"
+    make -C "$b/$d" install
+  done
+  [ -z "${AUTOTOOLS_POST:-}" ] || (cd "$b" && eval "$AUTOTOOLS_POST")
   finish "$name" "$b"
 }
 
@@ -383,10 +389,20 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   mapfile -t VIPS_FLAGS < <(flags vips.flags; flags vips.android.flags)
   meson_build libvips "${VIPS_FLAGS[@]}"
 
+  # SUB-013: bionic's iconv only converts UTF-8/16/32, ASCII and Latin-1. GNU libiconv (LGPL, shared) gives mpv and
+  # FFmpeg cp1251, Shift-JIS, GBK, Big5, EUC-KR and the rest. Only its library directories are built (not the GPL
+  # `iconv` program). It is built right before FFmpeg: libraries built earlier (glib, fontconfig, ...) must not see
+  # its iconv.h, which renames iconv() to libiconv() and needs a -liconv they do not pass.
+  AUTOTOOLS_SUBDIRS="libcharset lib" AUTOTOOLS_POST='install -m644 include/iconv.h.inst "$PREFIX/include/iconv.h"' \
+    autotools_build libiconv --disable-nls --enable-extra-encodings
+
   # FFmpeg
   mapfile -t FF_FLAGS < <(flags ffmpeg.common.flags; flags ffmpeg.android.flags)
   local ff_x86=(); [ "$ABI" = x86_64 ] && ff_x86=(--x86asmexe=nasm)
   [ "$ABI" = armeabi-v7a ] && ff_x86=(--enable-neon --enable-thumb)
+  # GNU libiconv (SUB-013): FFmpeg's configure check links without -liconv, which left libavcodec with
+  # undefined libiconv_* symbols and no DT_NEEDED; link it explicitly.
+  ff_x86+=(--extra-libs=-liconv)
   if should_build ffmpeg "${FF_FLAGS[@]}" --arch="$FF_ARCH" --cpu="$FF_CPU" "${ff_x86[@]}"; then
     local b="$BUILD/ffmpeg"; rm -rf "$b"; mkdir -p "$b"
     (cd "$b" && "$SRC/ffmpeg/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" --shlibdir="$PREFIX/lib" \
@@ -409,7 +425,8 @@ print(*out.values())' "${PL_FLAGS[@]}"))
 
   # mpv (libmpv only)
   mapfile -t MPV_FLAGS < <(flags mpv.flags; flags mpv.android.flags)
-  meson_build mpv "${MPV_FLAGS[@]}"
+  # meson's iconv dependency would take bionic's: point mpv at GNU libiconv (header + -liconv) for SUB-013.
+  meson_build mpv "${MPV_FLAGS[@]}" -Dc_args="$HARDEN $VKINC -I$PREFIX/include"     -Dc_link_args="$LDHARDEN -L$PREFIX/lib -liconv"
 
 
   # Sources and archives (TLS: none on Android, I/O reaches curl through the app's stream callbacks)
@@ -522,6 +539,7 @@ PY
   done
   { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; head -c 200000 "$NDK/NOTICE" 2>/dev/null || true; } > "$st/licenses/libc++.txt"
   check_elf "$st/lib"
+  python3 "$ROOT/scripts/elf_symbols.py" "$st/lib" "$TOOLCHAIN/sysroot/usr/lib/$HOST/$API" "$NM" "$READELF"
   local gpl
   gpl="$(python3 - "$st/build-info" <<'PY'
 import json, pathlib, sys
