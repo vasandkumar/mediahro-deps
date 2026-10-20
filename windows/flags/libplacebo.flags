@@ -1,0 +1,11 @@
+# Windows additions to ../flags/libplacebo.flags (lane B4c; docs/05 §4.1, §4.3).
+# D3D11 renderer (Flutter shares an ID3D11Texture2D) next to Vulkan; no OpenGL.
+# vulkan-1.dll is linked through a delay-load import (see patches/libplacebo).
+-Dd3d11=enabled
+-Dopengl=disabled
+-Dvk-proc-addr=enabled
+-Dlibdovi=disabled
+-Dxxhash=disabled
+-Dunwind=disabled
+-Dbench=false
+-Dfuzz=false

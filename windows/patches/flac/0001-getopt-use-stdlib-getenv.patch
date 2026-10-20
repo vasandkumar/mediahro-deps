@@ -1,0 +1,13 @@
+--- a/src/share/getopt/getopt.c	2025-02-10 19:50:26.489898600 +0530
++++ b/src/share/getopt/getopt.c	2026-10-19 20:19:31.556382500 +0530
+@@ -221,9 +221,7 @@
+ /* Avoid depending on library functions or files
+    whose names are inconsistent.  */
+ 
+-#ifndef getenv
+-extern char *getenv (const char * name);
+-#endif
++#include <stdlib.h> /* mediahro: UCRT declares getenv; a local redeclaration conflicts under clang-cl */
+ 
+ static char *
+ my_index (const char *str, int chr)

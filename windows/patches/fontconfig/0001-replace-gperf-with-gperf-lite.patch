@@ -1,0 +1,207 @@
+--- a/meson.build
++++ b/meson.build
+@@ -458,34 +458,9 @@
+   fonts_conf.set('CONFIGDIR', fc_configdir.split(fc_baseconfigdir + '/')[1])
+ endif
+ 
+-gperf = find_program('gperf', required: false)
+-gperf_len_type = ''
+-
+-if gperf.found() and get_option('wrap_mode') != 'forcefallback'
+-  gperf_test_format = '''
+-  #include <string.h>
+-  const char * in_word_set(const char *, @0@);
+-  @1@
+-  '''
+-  gperf_snippet = run_command(gperf, '-L', 'ANSI-C', files('meson-cc-tests/gperf.txt'),
+-                              check: true).stdout()
+-
+-  foreach type : ['size_t', 'unsigned']
+-    if cc.compiles(gperf_test_format.format(type, gperf_snippet))
+-      gperf_len_type = type
+-      break
+-    endif
+-  endforeach
+-
+-  if gperf_len_type == ''
+-    error('unable to determine gperf len type')
+-  endif
+-else
+-  # Fallback to subproject
+-  gperf = find_program('gperf')
+-  # assume if we are compiling from the wrap, the size is just size_t
+-  gperf_len_type = 'size_t'
+-endif
++# mediahro-deps: GNU gperf is GPL; gperf-lite.py (MIT) generates the two lookup tables.
++gperf = find_program('gperf-lite.py')
++gperf_len_type = 'size_t'
+ 
+ message('gperf len type is @0@'.format(gperf_len_type))
+ 
+--- a/gperf-lite.py
++++ b/gperf-lite.py
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python3
++# Copyright (c) 2026 Mediahro contributors. MIT License (mediahro-deps).
++"""Stand-in for GNU gperf (a GPL tool) covering what fontconfig's two lookup
++tables use: %struct-type with an int string-pool offset as the first field,
++%pic, %readonly-tables, %ignore-case (ASCII), %define {lookup,hash}-function-name
++and string-pool-name, %{ %} code blocks and "key", value... entries.
++
++Writes the same interface gperf does (string pool, hash and lookup functions)
++backed by a sorted table and a binary search instead of a perfect hash.
++
++Usage: gperf-lite.py [--pic] [-m N] INPUT --output-file OUTPUT
++"""
++
++import re
++import sys
++
++
++def parse_args(argv):
++    inp = out = None
++    i = 0
++    while i < len(argv):
++        a = argv[i]
++        if a == "--output-file":
++            out = argv[i + 1]
++            i += 2
++            continue
++        if a.startswith("--output-file="):
++            out = a.split("=", 1)[1]
++        elif a == "-m":
++            i += 1
++        elif not a.startswith("-"):
++            inp = a
++        i += 1
++    if not inp or not out:
++        sys.exit("gperf-lite: usage: gperf-lite.py INPUT --output-file OUTPUT")
++    return inp, out
++
++
++def c_str(s):
++    body = "".join(c if 32 <= ord(c) < 127 and c not in '"\\?' else "\\%03o" % ord(c) for c in s.decode("latin-1"))
++    return '"' + body + '\\0"'
++
++
++def main():
++    inp, out = parse_args(sys.argv[1:])
++    lines = open(inp, encoding="utf-8").read().splitlines()
++    code, decl, entries = [], [], []
++    opts = {"lookup-function-name": "in_word_set", "hash-function-name": "hash", "string-pool-name": "stringpool"}
++    ignore_case = False
++    section, in_code = 0, False
++    for line in lines:
++        if section == 0:
++            if line.startswith("%{"):
++                in_code = True
++            elif line.startswith("%}"):
++                in_code = False
++            elif in_code:
++                code.append(line)
++            elif line.startswith("%%"):
++                section = 1
++            elif line.startswith("%define "):
++                _, k, v = line.split(None, 2)
++                opts[k] = v.strip()
++            elif line.startswith("%ignore-case"):
++                ignore_case = True
++            elif not line.startswith("%"):
++                decl.append(line)
++        elif section == 1:
++            if line.startswith("%%"):
++                section = 2
++                continue
++            m = re.match(r'^\s*"((?:[^"\\]|\\.)*)"\s*,\s*(.+?)\s*$', line)
++            if m:
++                key = m.group(1).encode("utf-8").decode("unicode_escape").encode("latin-1")
++                entries.append((key, m.group(2)))
++    struct = None
++    for line in code + decl:
++        m = re.match(r"^\s*struct\s+([A-Za-z_][A-Za-z0-9_]*)", line)
++        if m:
++            struct = m.group(1)
++            break
++    if not struct or len(entries) < 2:
++        sys.exit(f"gperf-lite: {inp}: no struct type or only {len(entries)} entries")
++
++    def fold(b):
++        return b.lower() if ignore_case else b  # bytes.lower() folds ASCII only, like gperf
++
++    entries.sort(key=lambda e: fold(e[0]))
++    keys = [fold(k) for k, _ in entries]
++    if len(set(keys)) != len(keys):
++        sys.exit(f"gperf-lite: {inp}: duplicate keys")
++    offsets, pos = [], 0
++    for k, _ in entries:
++        offsets.append(pos)
++        pos += len(k) + 1
++
++    pool, lookup, hashf = opts["string-pool-name"], opts["lookup-function-name"], opts["hash-function-name"]
++    cmp = "fc_gperf_lite_ncasecmp" if ignore_case else "memcmp"
++    o = []
++    o.append("/* Generated by gperf-lite.py (mediahro-deps) from %s; replaces GNU gperf output. */" % inp.replace("\\", "/").split("/")[-1])
++    o.append("#include <string.h>")
++    o += code
++    o += [d for d in decl if d.strip()]
++    o.append("")
++    o.append("static const char %s_contents[] =" % pool)
++    o += ["  " + c_str(k) for k, _ in entries]
++    o[-1] += ";"
++    o.append("#define %s ((const char *) %s_contents)" % (pool, pool))
++    o.append("")
++    o.append("static const struct %s %s_wordlist[] = {" % (struct, lookup))
++    o += ["  { %d, %s }," % (off, v) for off, (_, v) in zip(offsets, entries)]
++    o.append("};")
++    o.append("")
++    if ignore_case:
++        o += [
++            "static int",
++            "fc_gperf_lite_ncasecmp (const char *a, const char *b, size_t n)",
++            "{",
++            "    for (; n; n--, a++, b++) {",
++            "        unsigned char x = (unsigned char) *a, y = (unsigned char) *b;",
++            "        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';",
++            "        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';",
++            "        if (x != y) return x < y ? -1 : 1;",
++            "    }",
++            "    return 0;",
++            "}",
++            "",
++        ]
++    o += [
++        "static unsigned int",
++        "%s (register const char *str, register FC_GPERF_SIZE_T len)" % hashf,
++        "{",
++        "    (void) str;",
++        "    return (unsigned int) len;",
++        "}",
++        "",
++        "static const struct %s *" % struct,
++        "%s (register const char *str, register FC_GPERF_SIZE_T len)" % lookup,
++        "{",
++        "    size_t lo = 0, hi = sizeof (%s_wordlist) / sizeof (%s_wordlist[0]);" % (lookup, lookup),
++        "    (void) %s;" % hashf,
++        "    while (lo < hi) {",
++        "        size_t mid = lo + (hi - lo) / 2;",
++        "        const char *s = %s + %s_wordlist[mid].name;" % (pool, lookup),
++        "        size_t slen = strlen (s);",
++        "        int c = %s (str, s, len < slen ? len : slen);" % cmp,
++        "        if (c == 0)",
++        "            c = len < slen ? -1 : (len > slen ? 1 : 0);",
++        "        if (c == 0)",
++        "            return &%s_wordlist[mid];" % lookup,
++        "        if (c < 0)",
++        "            hi = mid;",
++        "        else",
++        "            lo = mid + 1;",
++        "    }",
++        "    return 0;",
++        "}",
++    ]
++    with open(out, "w", encoding="utf-8", newline="\n") as f:
++        f.write("\n".join(o) + "\n")
++
++
++if __name__ == "__main__":
++    main()

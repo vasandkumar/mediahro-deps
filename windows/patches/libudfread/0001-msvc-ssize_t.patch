@@ -1,0 +1,28 @@
+--- a/src/udfread.h
++++ b/src/udfread.h
+@@ -28,6 +28,11 @@
+
+ #include <stdint.h>    /* *int_t */
+ #include <sys/types.h> /* *size_t */
++#if defined(_MSC_VER) && !defined(MEDIAHRO_SSIZE_T)
++#define MEDIAHRO_SSIZE_T
++#include <basetsd.h>
++typedef SSIZE_T ssize_t; /* mediahro-deps: the MSVC CRT has no ssize_t */
++#endif
+
+ #ifdef UDFREAD_API_EXPORT
+ #include "attributes.h"
+--- a/src/default_blockinput.c
++++ b/src/default_blockinput.c
+@@ -41,6 +41,11 @@
+ #include <stdio.h>
+ #endif
+ #include <io.h>
++#if defined(_MSC_VER) && !defined(MEDIAHRO_SSIZE_T)
++#define MEDIAHRO_SSIZE_T
++#include <basetsd.h>
++typedef SSIZE_T ssize_t; /* mediahro-deps: the MSVC CRT has no ssize_t */
++#endif
+ # undef  lseek
+ # define lseek _lseeki64
+ # undef  off_t

@@ -1,0 +1,11 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -16,7 +16,7 @@
+     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+ endif(MSVC)
+ 
+-add_definitions(-DUSE_LIBICONV_DLL)
++# mediahro-deps: no USE_LIBICONV_DLL; never load a DLL named by an environment variable.
+ if(DEFAULT_LIBICONV_DLL)
+ 	add_definitions(-DDEFAULT_LIBICONV_DLL=${DEFAULT_LIBICONV_DLL})
+ endif(DEFAULT_LIBICONV_DLL)

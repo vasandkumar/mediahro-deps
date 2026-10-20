@@ -1,0 +1,13 @@
+--- a/cmake/cpu.cmake
++++ b/cmake/cpu.cmake
+@@ -96,7 +96,9 @@
+     set(CMAKE_REQUIRED_FLAGS ${SIMD_COMPILE_FLAG})
+     webp_check_compiler_flag(${WEBP_SIMD_FLAG} ${WEBP_ENABLE_SIMD})
+   else()
+-    if(MSVC AND SIMD_ENABLE_FLAGS)
++    # mediahro-deps: NEON is always on for AArch64; -mfpu=neon is an ARM32
++    # option that clang-cl rejects for aarch64-pc-windows-msvc.
++    if(MSVC AND SIMD_ENABLE_FLAGS AND NOT WEBP_SIMD_FLAG STREQUAL "NEON")
+       # The detection for SSE2/SSE4 support under MSVC is based on the compiler
+       # version so e.g., clang-cl will require flags to enable the assembly.
+       list(GET SIMD_ENABLE_FLAGS ${I_SIMD} SIMD_COMPILE_FLAG)

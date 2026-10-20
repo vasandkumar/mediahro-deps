@@ -1,0 +1,27 @@
+--- a/src/vulkan/context.c
++++ b/src/vulkan/context.c
+@@ -16,6 +16,9 @@
+  */
+ 
+ #include "common.h"
++#ifdef _WIN32
++#include <windows.h>
++#endif
+ #include "command.h"
+ #include "utils.h"
+ #include "gpu.h"
+@@ -557,6 +560,14 @@
+         return get_proc_addr;
+ 
+ #ifdef PL_HAVE_VK_PROC_ADDR
++#ifdef _WIN32
++    // mediahro-deps: vulkan-1.dll is delay-loaded (it ships with GPU drivers,
++    // not with the app). Fail cleanly here instead of faulting on first call.
++    if (!GetModuleHandleW(L"vulkan-1.dll") && !LoadLibraryW(L"vulkan-1.dll")) {
++        pl_fatal(log, "vulkan-1.dll is not available on this system");
++        return NULL;
++    }
++#endif
+     return vkGetInstanceProcAddr;
+ #else
+     pl_fatal(log, "No `vkGetInstanceProcAddr` function provided, and "

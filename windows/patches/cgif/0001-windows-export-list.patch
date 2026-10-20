@@ -1,0 +1,18 @@
+--- a/meson.build
++++ b/meson.build
+@@ -12,6 +12,7 @@
+   'cgif',
+   cgif_sources,
+   include_directories : ['inc/'],
++  vs_module_defs : 'cgif.def',
+   soversion : '0',
+   version : meson.project_version(),
+   install : true,
+--- a/cgif.def
++++ b/cgif.def
+@@ -0,0 +1,5 @@
++; mediahro-deps: public API of inc/cgif.h, so the Windows DLL gets an import library.
++EXPORTS
++  cgif_newgif
++  cgif_addframe
++  cgif_close
