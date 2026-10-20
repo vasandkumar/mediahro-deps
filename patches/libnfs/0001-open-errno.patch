@@ -1,0 +1,40 @@
+libnfs 8.0.0: a failed NFSv3 open returns the real errno, not -EIO.
+
+nfs3_open_create_cb() and nfs3_open_cb() pass an err that is already a
+negative errno through nfsstat3_to_errno() again, which maps every value it
+does not know to -EIO. So ENOENT, EACCES, ENOTDIR, ESTALE and the rest from a
+failed open all reach the caller as -EIO. This is a backport of upstream
+master, which passes err through unchanged. libnfs 8.0.0 (pinned here) has the
+same code as 6.0.2; the hunks below are B2's with 8.0.0 line numbers.
+
+Origin: Mediahro lane B2, mediahro PR #21 at a494b58,
+packages/mediahro_ffi/test/network/patches/libnfs-6.0.2-open-errno.patch.
+
+Licence: this is a modification of libnfs, which is LGPL-2.1-or-later, and the
+change is under the same licence. The modified source is offered with the
+release's mediahro-deps-sources.tar, which carries this patch next to the
+pinned upstream tarball (LGPL-2.1 section 6).
+
+Applied by scripts/sources.py with patch -p1 from the libnfs-8.0.0 root, on
+every platform.
+
+--- a/lib/nfs_v3.c
++++ b/lib/nfs_v3.c
+@@ -4906,7 +4906,7 @@
+ 	struct open_cb_data *cb_data = private_data;
+ 
+         if (err) {
+-		cb_data->cb(nfsstat3_to_errno(err), nfs,
++		cb_data->cb(err, nfs,
+                          nfs_get_error(nfs), cb_data->private_data);
+                 free_open_cb_data(cb_data);
+                 return;
+@@ -5066,7 +5066,7 @@
+                 return;
+         }
+         if (err) {
+-                cb_data->cb(nfsstat3_to_errno(err), nfs,
++                cb_data->cb(err, nfs,
+                             nfs_get_error(nfs), cb_data->private_data);
+                 free_open_cb_data(cb_data);
+                 return;
