@@ -13,7 +13,7 @@
 # APP_ROOTS = mpv (and the FFmpeg libraries B1 opens for CAST-005 remux) plus
 # every NativeLibrary in packages/mediahro_ffi/lib/src/native/native_library.dart.
 APP_ROOTS="mpv avformat avcodec avutil avfilter swscale swresample vips jxl avif raw smb2 nfs curl archive
-ebur128 chromaprint openmpt whisper uchardet"
+ebur128 chromaprint openmpt whisper uchardet tesseract leptonica"
 
 # dylib_stem libfoo.1.2.3.dylib -> libfoo ; libglib-2.0.0.dylib -> libglib-2
 dylib_stem() {

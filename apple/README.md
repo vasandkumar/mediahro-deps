@@ -24,7 +24,7 @@ The build also writes `apple-sizes.md` (thinned iOS arm64 and macOS universal to
 
 **Naming contract** (`packages/mediahro_ffi` `nativeLibraryFileName` and lane B1's engine loader): `lib<name>[.N…].dylib` becomes `<name>.framework/<name>`, e.g. `mpv.framework/mpv`, `vips.framework/vips`, `avcodec.framework/avcodec`, `placebo.framework/placebo`, `MoltenVK.framework/MoltenVK`, `glib-2.framework/glib-2`. Install names are `@rpath/<name>.framework/<name>` on iOS and `@rpath/<name>.framework/Versions/A/<name>` on macOS; each framework also carries an `@loader_path` rpath to its sibling frameworks. Frameworks are ad-hoc signed; the app build re-signs them with the real identity (signing is an owner task).
 
-**What ships** (ADR-020): the dependency closure of the app's libraries — mpv and the FFmpeg libraries B1 opens for remuxing, plus every `NativeLibrary` in `packages/mediahro_ffi/lib/src/native/native_library.dart` (`APP_ROOTS` in `lib/frameworks.sh`). Dylibs a dependency builds but nothing needs (e.g. turbojpeg, raw_r, girepository, harfbuzz-subset) are listed under `not_shipped` in their build-info.
+**What ships** (ADR-020): the dependency closure of the app's libraries — mpv and the FFmpeg libraries B1 opens for remuxing, plus every `NativeLibrary` in `packages/mediahro_ffi/lib/src/native/native_library.dart` and Tesseract + Leptonica for the SUB-051 OCR fallback (`packages/mediahro_ffi/lib/src/tesseract/`, ADR-025 §5) (`APP_ROOTS` in `lib/frameworks.sh`). No Tesseract traineddata ships: the app downloads language data on demand. Dylibs a dependency builds but nothing needs (e.g. turbojpeg, raw_r, girepository, harfbuzz-subset) are listed under `not_shipped` in their build-info.
 
 ## Libraries
 

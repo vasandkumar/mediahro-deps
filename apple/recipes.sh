@@ -4,7 +4,7 @@
 
 RECIPES="libffi pcre2 glib expat brotli highway opus libvpx dav1d
 freetype fribidi harfbuzz libass lcms2 libjpeg-turbo libspng libwebp libdeflate zstd xz libtiff
-imath openexr libexif libjxl libavif libraw uchardet libebur128 libudfread libbluray
+imath openexr libexif libjxl libavif libraw leptonica tesseract uchardet libebur128 libudfread libbluray
 libopenmpt libsmb2 libnfs curl libarchive chromaprint whisper.cpp libvips vulkan-headers
 moltenvk glslang libplacebo ffmpeg mpv"
 
@@ -288,6 +288,32 @@ build_libraw() {
   autotools_build libraw "$s" --disable-examples --disable-openmp --disable-jasper --enable-lcms --enable-jpeg \
     --enable-zlib
   license libraw "$s/LICENSE.CDDL" "$s/COPYRIGHT"
+}
+
+# --- OCR (SUB-051 fallback, ADR-025 §5) -----------------------------------------
+
+build_leptonica() {
+  local s; s=$(src leptonica)
+  # Reuses the shipped libjpeg-turbo, libtiff and libwebp plus the SDK's zlib;
+  # no libpng (none ships), GIF or OpenJPEG.
+  cmake_build leptonica "$s" -DBUILD_PROG=OFF -DENABLE_PNG=OFF -DENABLE_GIF=OFF -DENABLE_OPENJPEG=OFF \
+    -DENABLE_JPEG=ON -DENABLE_TIFF=ON -DENABLE_WEBP=ON -DENABLE_ZLIB=ON -DSW_BUILD=OFF
+  license leptonica "$s/leptonica-license.txt"
+}
+
+build_tesseract() {
+  local s cross=(); s=$(src tesseract)
+  # Cross builds cannot run Tesseract's Leptonica-TIFF probe.
+  if [ "$NATIVE" = 0 ]; then cross=(-DLEPT_TIFF_RESULT=0 -DLEPT_TIFF_RESULT__TRYRUN_OUTPUT=); fi
+  # libtesseract and its C API only (no training tools, libarchive, curl, OpenMP
+  # or ScrollView). The legacy engine stays (OSD script detection uses it);
+  # ENABLE_NATIVE stays off: x86_64 picks its AVX/FMA/SSE kernels at run time.
+  # No traineddata ships: the app downloads language data on demand.
+  cmake_build tesseract "$s" -DBUILD_TRAINING_TOOLS=OFF -DBUILD_TESTS=OFF -DDISABLE_ARCHIVE=ON -DDISABLE_CURL=ON \
+    -DDISABLE_TIFF=ON -DOPENMP_BUILD=OFF -DGRAPHICS_DISABLED=ON -DENABLE_NATIVE=OFF -DINSTALL_CONFIGS=OFF \
+    -DENABLE_CCACHE=OFF -DENABLE_PRECOMPILED_HEADERS=OFF -DSW_BUILD=OFF \
+    -DLeptonica_DIR="$PREFIX/lib/cmake/leptonica" "${cross[@]}"
+  license tesseract "$s/LICENSE"
 }
 
 # --- text, audio analysis -------------------------------------------------------

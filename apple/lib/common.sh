@@ -14,7 +14,7 @@ HARDEN_LDFLAGS="-Wl,-headerpad_max_install_names"
 # ADR-020: -O2 on the decode / render / image hot paths, -Os for everything off
 # them (same split as android/build.sh SIZE_LIBS).
 SIZE_LIBS="brotli libdeflate expat libffi pcre2 glib uchardet libudfread libbluray libarchive libexif imath
-openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint xz zstd"
+openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint xz zstd leptonica"
 # libvpx is installed as a static archive and wrapped into a dylib by hand.
 NO_LTO_LIBS="libvpx"
 OPT_LEVEL=-O2
