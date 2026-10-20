@@ -1,0 +1,32 @@
+marian-dev 2781d73: keep the caller's CMAKE_C_FLAGS / CMAKE_CXX_FLAGS.
+
+Marian's CMakeLists.txt replaces CMAKE_CXX_FLAGS and CMAKE_C_FLAGS with its own
+values on non-MSVC, non-WASM builds, so the flags a platform build passes
+(mediahro-deps: _FORTIFY_SOURCE, stack protector, stack-clash protection,
+BTI/PAC or CET, ThinLTO, section GC) were silently dropped for everything
+Marian compiles. The patch prepends the incoming flags; Marian's own
+-std=c++11, -march=${BUILD_ARCH}, -O3 and warnings still apply.
+
+Licence: modification of Marian (MIT), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the marian-dev root.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -364,7 +364,7 @@
+                                               --post-js ${CMAKE_SOURCE_DIR}/wasm/post-module.js \
+                                               --shell-file ${CMAKE_SOURCE_DIR}/wasm/custom_shell.html")
+   else(COMPILE_WASM)
+-    set(CMAKE_CXX_FLAGS                 "-std=c++11 -pthread ${CMAKE_GCC_FLAGS} -fPIC ${DISABLE_GLOBALLY} -march=${BUILD_ARCH} ${INTRINSICS} ${BUILD_WIDTH}")
++    set(CMAKE_CXX_FLAGS                 "${CMAKE_CXX_FLAGS} -std=c++11 -pthread ${CMAKE_GCC_FLAGS} -fPIC ${DISABLE_GLOBALLY} -march=${BUILD_ARCH} ${INTRINSICS} ${BUILD_WIDTH}")
+     set(CMAKE_CXX_FLAGS_RELEASE         "-O3 ${BUILD_WIDTH} -funroll-loops")
+     set(CMAKE_CXX_FLAGS_DEBUG           "-O0 -g ${CMAKE_RDYNAMIC_FLAG}")
+     set(CMAKE_CXX_FLAGS_SLIM            "-O3 ${BUILD_WIDTH} -funroll-loops -DNDEBUG")
+@@ -374,7 +374,7 @@
+     set(CMAKE_CXX_FLAGS_PROFUSE         "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -fprofile-use -fprofile-correction")
+ 
+     # these need to be set separately
+-    set(CMAKE_C_FLAGS                 "-pthread ${CMAKE_GCC_FLAGS} -fPIC ${DISABLE_GLOBALLY} -march=${BUILD_ARCH} ${INTRINSICS}")
++    set(CMAKE_C_FLAGS                 "${CMAKE_C_FLAGS} -pthread ${CMAKE_GCC_FLAGS} -fPIC ${DISABLE_GLOBALLY} -march=${BUILD_ARCH} ${INTRINSICS}")
+     set(CMAKE_C_FLAGS_RELEASE         "-O3 ${BUILD_WIDTH} -funroll-loops")
+     set(CMAKE_C_FLAGS_DEBUG           "-O0 -g ${CMAKE_RDYNAMIC_FLAG}")
+     set(CMAKE_C_FLAGS_SLIM            "-O3 ${BUILD_WIDTH} -funroll-loops -DNDEBUG")
