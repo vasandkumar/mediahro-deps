@@ -1,6 +1,6 @@
 # AV1 encoder for AVIF export (ADR-037, lane B4a)
 
-Status: **prepared, not built.** The recipe, pin and key are on this branch; no native compile has run. Sizes below are
+Status: **prepared, not built.** The recipe and pin are on this branch; no native compile has run. Sizes below are
 estimates from the source tree and from distribution packages, and are replaced by measured numbers on the first build
 (one ABI, libaom + libavif only, before the release build).
 
@@ -18,7 +18,7 @@ and Android has no OS AVIF encoder (C3's request, `docs/lanes/requests/c3-imagin
 | libavif wiring | `-DAVIF_CODEC_AOM=SYSTEM` (libavif's default and best-tested AV1 encoder; its stills presets target libaom) | `-DAVIF_CODEC_RAV1E=SYSTEM`, fewer still-image tunings |
 | ARM SIMD | NEON intrinsics for arm64 and armv7, plus DOTPROD/I8MM/SVE variants picked at run time on arm64 | NEON assembly for arm64 only, as far as I know; armeabi-v7a would run scalar (to be confirmed) |
 | Size per ABI (stripped, estimate) | ~3–4 MB arm64, ~2.5–3.5 MB armv7, ~4–5 MB x86_64 | similar order; unknown without a build |
-| Source pin | one signed tarball (`libaom-3.15.2.tar.gz` + `.asc`, key `AOMedia release signing key`, fingerprint `B002 F08B 74A1 48DA A01F 7123 A48E 86DB 0B83 0498`) | tarball + vendored crates |
+| Source pin | one tarball (`libaom-3.15.2.tar.gz`) pinned by SHA-256, tree identical to the git tag (see "How the source is verified") | tarball + vendored crates |
 
 Not considered further: SVT-AV1 (built for server video throughput, large memory, x86 first; wrong tool for stills on
 phones) and libgav1 (decoder).
@@ -86,8 +86,21 @@ libaom is BSD-2-Clause with the AOMedia Patent License 1.0 (royalty-free grant f
 termination clause). That grant does not cover third parties outside the Alliance; a commercial AV1 patent pool (Sisvel)
 exists and asserts claims against some AV1 products. The app already ships an AV1 *decoder* (dav1d), so adding an encoder
 extends an existing exposure rather than creating one; it is the owner's call whether that needs counsel before the
-first store release. The signing key was fetched from keyserver.ubuntu.com by the signature's issuer fingerprint
-(`keys/libaom.asc`): it is a trust-on-first-use pin, so check it against an independent source before merging.
+first store release.
+
+## How the source is verified
+
+- **SHA-256 over HTTPS** from Google's official AOM release bucket (`storage.googleapis.com/aom-releases`), the same
+  level as libavif and tesseract (`verified: ["https-release-bucket"]` in `versions.json`).
+- **No OpenPGP check.** An `.asc` is published (issuer `B002F08B74A148DAA01F7123A48E86DB0B830498`, "AOMedia release signing
+  key"), but no independent source confirms that fingerprint: Debian's packaging, the AOM announcements and README,
+  libavif's scripts, Nix and web searches name no key, and nothing names a different one either. The key is therefore not
+  used and not committed (orchestrator decision: no trust-on-first-use).
+- **Tree comparison with the git tag** (2026-10-21): `git clone --depth 1 --branch v3.15.2
+  https://aomedia.googlesource.com/aom` (tag commit `af3dc9aadc793c1b00edc003e3fc19a44fdeb574`) against the extracted
+  tarball, `diff -rq --exclude=.git`: **no differences**, 1,520 regular files on both sides (checked by a subagent; the
+  tag commit and file count re-checked by hand). The tarball is byte-identical to the tag's tree. If the tag cannot be
+  reached when the release is built, say so in the PR and the release notes.
 
 ## To build (needs the orchestrator's go)
 
