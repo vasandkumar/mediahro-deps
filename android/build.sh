@@ -424,6 +424,8 @@ print(*out.values())' "${PL_FLAGS[@]}"))
        || { cat "$b/configure.out"; tail -50 "$b/ffbuild/config.log"; exit 1; }
     # --disable-everything makes every component explicit: a misspelt name must not drop a format silently.
     if grep -E "did not match anything|Unknown option" "$b/configure.out"; then echo "build: fix the FFmpeg flags above" >&2; exit 1; fi
+    # configure drops one wrong name inside a list silently: check every requested component by name.
+    python3 "$ROOT/scripts/ffmpeg_components.py" "$b/config_components.h" "${STEP_ARGS[@]}"
     make -C "$b" -j "$JOBS"
     make -C "$b" install
     finish ffmpeg "$b"
