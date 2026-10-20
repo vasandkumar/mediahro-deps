@@ -10,14 +10,21 @@ Compiled sources are read from the build's dependency records:
     libraries (`ninja -t inputs`) and their objects' header deps (`ninja -t deps`)
   * make builds (autotools, FFmpeg, libvpx): every *.d, *.Po, *.Plo depfile
     (all compiled objects, a superset of what was linked)
+  * each depfile's object: its own source (x.c / x.S / x.asm ... at the
+    object's path in the source tree). MSVC-style depfiles (-showIncludes, as
+    FFmpeg's msvc toolchain writes them) list headers only
+  * MSBuild projects (libvpx on Windows): ClCompile / CustomBuild / ClInclude
+    items of every .vcxproj
 Only files inside the library's source or build tree are classified.
 
 A file is GPL-only when its header carries a GPL notice (or an SPDX GPL id)
 with no LGPL wording, no licence exception (Bison, Autoconf, GCC runtime) and
 no permissive grant of its own.
 
-Usage: python scripts/source_scan.py NAME SRC_DIR BUILD_DIR OUT_JSON [SHIPPED_LIB ...]
-Exits 1 when any GPL-only source was compiled.
+Usage: python scripts/source_scan.py [--fallback-tree] NAME SRC_DIR BUILD_DIR OUT_JSON [SHIPPED_LIB ...]
+Exits 1 when any GPL-only source was compiled, 2 when the build left no
+dependency records. --fallback-tree scans every source file in SRC_DIR
+instead (a superset) when there are none.
 """
 
 from __future__ import annotations
@@ -106,6 +113,50 @@ def make_sources(build: Path) -> set[Path]:
     return out
 
 
+OBJECT_SOURCE_EXT = (".c", ".cc", ".cpp", ".cxx", ".S", ".s", ".asm", ".m", ".mm")
+
+
+def object_sources(build: Path, src: Path) -> set[Path]:
+    """The source each depfile's object was compiled from (MSVC depfiles name only headers)."""
+    out: set[Path] = set()
+    for dep in build.rglob("*.d"):
+        try:
+            target = dep.read_text(encoding="utf-8", errors="replace").split(": ", 1)[0].strip()
+        except OSError:
+            continue
+        stems = [dep.relative_to(build).with_suffix("")]
+        if target:
+            t = Path(target.replace("\\", "/")).with_suffix("")
+            if t.is_absolute():
+                t = t.relative_to(build) if t.is_relative_to(build) else None
+            if t is not None:
+                stems.append(t)
+        for stem in stems:
+            for ext in OBJECT_SOURCE_EXT:
+                p = src / (stem.as_posix() + ext)
+                if p.exists():
+                    out.add(p)
+    return out
+
+
+MSBUILD_ITEM = re.compile(r'<(?:ClCompile|CustomBuild|ClInclude)\s+Include="([^"]+)"')
+
+
+def msbuild_items(build: Path) -> set[Path]:
+    """ClCompile / CustomBuild / ClInclude items of every MSBuild project in the build tree."""
+    out: set[Path] = set()
+    for proj in build.rglob("*.vcxproj"):
+        text = proj.read_text(encoding="utf-8", errors="replace")
+        for m in MSBUILD_ITEM.finditer(text):
+            p = Path(m.group(1).replace("\\", "/"))
+            out.add(p if p.is_absolute() else proj.parent / p)
+    return out
+
+
+def tree_sources(src: Path) -> set[Path]:
+    return {p for p in src.rglob("*") if p.is_file() and p.suffix in SOURCE_EXT}
+
+
 def classify(path: Path) -> str:
     try:
         head = path.read_text(encoding="utf-8", errors="replace")[:8000]
@@ -119,14 +170,21 @@ def classify(path: Path) -> str:
 
 
 def main() -> int:
-    name, src, build, out = sys.argv[1], Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve(), Path(sys.argv[4])
-    libs = [Path(a).name for a in sys.argv[5:]]
-    files = {p.resolve() for p in ninja_sources(build, libs) | make_sources(build) if p.exists()}
+    args = sys.argv[1:]
+    fallback_tree = "--fallback-tree" in args
+    args = [a for a in args if a != "--fallback-tree"]
+    name, src, build, out = args[0], Path(args[1]).resolve(), Path(args[2]).resolve(), Path(args[3])
+    libs = [Path(a).name for a in args[4:]]
+    found = ninja_sources(build, libs) | make_sources(build) | object_sources(build, src) | msbuild_items(build)
+    files = {p.resolve() for p in found if p.exists()}
     files = {p for p in files if p.is_relative_to(src) or p.is_relative_to(build)}
+    method = "build records"
+    if not files and fallback_tree:
+        files, method = tree_sources(src), "whole source tree (no build records)"
     gpl_only, exceptions = [], []
     for p in sorted(files):
         c = classify(p)
-        rel = str(p.relative_to(src)) if p.is_relative_to(src) else "<build>/" + str(p.relative_to(build))
+        rel = p.relative_to(src).as_posix() if p.is_relative_to(src) else "<build>/" + p.relative_to(build).as_posix()
         if c == "gpl-only":
             gpl_only.append(rel)
         elif c == "exception":
@@ -135,7 +193,7 @@ def main() -> int:
               "gpl_with_exception_sources": exceptions}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(f"source-scan {name}: {len(files)} files, {len(gpl_only)} GPL-only, {len(exceptions)} GPL-with-exception")
+    print(f"source-scan {name}: {len(files)} files ({method}), {len(gpl_only)} GPL-only, {len(exceptions)} GPL-with-exception")
     for f in gpl_only:
         print(f"  GPL-only: {f}", file=sys.stderr)
     if not files:

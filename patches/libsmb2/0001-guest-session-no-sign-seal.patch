@@ -1,0 +1,105 @@
+libsmb2 6.2: never sign or seal a guest or null session (no session key).
+
+When session setup returns SMB2_SESSION_FLAG_IS_GUEST or IS_NULL, the client
+gets no session key (MS-SMB2 3.2.5.3.1). libsmb2 6.2 still derives keys and
+turns on sealing, either from IS_ENCRYPT_DATA or from the share's
+SMB2_SHAREFLAG_ENCRYPT_DATA. A server with "smb encrypt = desired" then drops
+the connection. With this patch a guest or null session:
+  * never signs or seals, and skips key derivation;
+  * ignores the share's encrypt flag (a server that requires encryption
+    refuses the tree connect itself);
+  * does not sign its SMB 3.1.1 TREE_CONNECT (lib/pdu.c), which 3.1.1
+    otherwise signs even without session signing;
+  * fails with -EACCES when the caller asked for signing.
+
+Origin: Mediahro lane B2 (NET-001), mediahro PR #21 at a494b58 (5 hunks;
+first carried from PR #20 at b5951f8),
+packages/mediahro_ffi/test/network/patches/libsmb2-6.2-guest-session.patch.
+
+Licence: this is a modification of libsmb2, which is LGPL-2.1-or-later, and
+the change is under the same licence. The modified source is offered with
+the release's mediahro-deps-sources.tar, which carries this patch next to the
+pinned upstream tarball (LGPL-2.1 section 6).
+
+Applied by scripts/sources.py with patch -p1 from the libsmb2-6.2 root, on
+every platform.
+
+diff -ru a/include/libsmb2-private.h b/include/libsmb2-private.h
+--- a/include/libsmb2-private.h
++++ b/include/libsmb2-private.h
+@@ -182,6 +182,9 @@
+ 
+         uint8_t seal:1;
+         uint8_t sign:1;
++        /* The session is a guest or null session: it has no session key,
++         * so it can be neither signed nor sealed (MS-SMB2 3.2.5.3.1). */
++        uint8_t guest:1;
+         uint8_t signing_key[SMB2_KEY_SIZE];
+         uint8_t serverin_key[SMB2_KEY_SIZE];
+         uint8_t serverout_key[SMB2_KEY_SIZE];
+diff -ru a/lib/libsmb2.c b/lib/libsmb2.c
+--- a/lib/libsmb2.c
++++ b/lib/libsmb2.c
+@@ -701,7 +701,22 @@
+                 return;
+         }
+ 
+-        if (rep->session_flags & SMB2_SESSION_FLAG_IS_ENCRYPT_DATA) {
++        if (rep->session_flags & (SMB2_SESSION_FLAG_IS_GUEST |
++                                  SMB2_SESSION_FLAG_IS_NULL)) {
++                /* No session key: never sign or seal this session, even if
++                 * the server would like encryption ("smb encrypt = desired").
++                 * A server that requires it refuses the tree connect. */
++                smb2->guest = 1;
++                smb2->seal = 0;
++                if (smb2->sign) {
++                        smb2_close_context(smb2);
++                        smb2_set_error(smb2, "Signing required, but the "
++                                       "server granted a guest session");
++                        c_data->cb(smb2, -EACCES, NULL, c_data->cb_data);
++                        free_c_data(smb2, c_data);
++                        return;
++                }
++        } else if (rep->session_flags & SMB2_SESSION_FLAG_IS_ENCRYPT_DATA) {
+                 smb2->seal = 1;
+                 smb2->sign = 0;
+         }
+@@ -724,7 +739,8 @@
+ #endif
+ 
+ 
+-        if (smb2->sign || smb2->seal || smb2->dialect == SMB2_VERSION_0311) {
++        if (!smb2->guest &&
++            (smb2->sign || smb2->seal || smb2->dialect == SMB2_VERSION_0311)) {
+                 uint8_t zero_key[SMB2_KEY_SIZE] = {0};
+                 int have_valid_session_key = 1;
+ 
+diff -ru a/lib/pdu.c b/lib/pdu.c
+--- a/lib/pdu.c
++++ b/lib/pdu.c
+@@ -627,8 +627,11 @@
+                         }
+                 }
+                 smb2_encode_header(smb2, &p->out.iov[0], &p->header);
++                /* 3.1.1 signs TREE_CONNECT even without session signing,
++                 * except on a guest/null session, which has no key. */
+                 if (smb2->sign ||
+-                    (p->header.command == SMB2_TREE_CONNECT && smb2->dialect == SMB2_VERSION_0311 && !smb2->seal)) {
++                    (p->header.command == SMB2_TREE_CONNECT && smb2->dialect == SMB2_VERSION_0311 &&
++                     !smb2->seal && !smb2->guest)) {
+                         if (smb2_pdu_add_signature(smb2, p) < 0) {
+                                 smb2_set_error(smb2, "Failure to add "
+                                                "signature. %s",
+diff -ru a/lib/smb2-cmd-tree-connect.c b/lib/smb2-cmd-tree-connect.c
+--- a/lib/smb2-cmd-tree-connect.c
++++ b/lib/smb2-cmd-tree-connect.c
+@@ -215,7 +215,8 @@
+         smb2_get_uint32(iov, 8, &rep->capabilities);
+         smb2_get_uint32(iov, 12, &rep->maximal_access);
+ 
+-        if (!smb2->seal)
++        /* A guest session has no keys to encrypt with (see session setup). */
++        if (!smb2->seal && !smb2->guest)
+                 smb2->seal = !!(rep->share_flags & SMB2_SHAREFLAG_ENCRYPT_DATA);
+ 
+         return 0;
