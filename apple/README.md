@@ -46,14 +46,16 @@ Same set as Android (`android/build.sh`), mapped to Apple's toolchain:
 - FFmpeg from the shared `--disable-everything` + docs/04 component list, plus the VideoToolbox / AudioToolbox components in `../flags/ffmpeg.apple.flags`; configure fails on a component name it does not know.
 - `MEDIAHRO_APPLE_MEASURE=1` runs one clean ios-arm64 build per variant (default set, `MEDIAHRO_LTO`, `MEDIAHRO_NO_ICF`, `MEDIAHRO_NO_GC`, `MEDIAHRO_ALL_O2`; stripping from the same build) and writes `apple-size-table.md`.
 
-Measured (ios-arm64, shipped frameworks, stripped; run 39353528039 with ThinLTO on in every variant):
+Measured (ios-arm64, shipped frameworks, stripped; clean builds, one switch each, run 39370195470):
 
-| Optimisation | Effect |
-|---|---:|
-| ThinLTO | **+3.64 MB** (53.76 vs 50.12 MB) — not used |
-| `-Os` off the hot path | −1.38 MB (glib/gio −0.8, openmpt −0.4, bluray −0.1) |
-| Section GC (`-dead_strip`) | −0.05 MB |
-| `strip -x` | −3.12 MB |
+| Variant | Total | The optimisation buys |
+|---|---:|---:|
+| Default set | **50.12 MB** | — |
+| + ThinLTO (`-flto=thin`, opt level on the link line) | 53.72 MB | **+3.60 MB** — not used |
+| No ICF (`-Wl,-no_deduplicate`) | 50.56 MB | ICF (ld64 default): −0.44 MB |
+| No section GC | 50.77 MB | `-dead_strip` + sections: −0.65 MB |
+| All `-O2` | 50.60 MB | `-Os` off the hot path: −0.48 MB |
+| Unstripped | 54.31 MB | `strip -x`: −4.19 MB |
 
 ## Policy notes
 
