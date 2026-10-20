@@ -19,5 +19,7 @@
 --enable-encoder=h264_mf,hevc_mf,aac_mf,h264_d3d12va,hevc_d3d12va,av1_d3d12va
 --enable-filter=scale_d3d11,scale_d3d12
 # The D3D11/D3D12 scale filters reference IID_ID3D1x* GUIDs, which MSVC
-# toolchains take from dxguid.lib (configure only adds it for MinGW).
---extra-libs=-ldxguid
+# toolchains take from dxguid.lib (configure only adds it for MinGW; --extra-libs
+# is passed to link.exe as is, so the MSVC spelling). iconv.lib: configure's probe
+# "finds" iconv in the CRT (the probe's reference is dropped), so name win-iconv.
+--extra-libs=dxguid.lib iconv.lib
