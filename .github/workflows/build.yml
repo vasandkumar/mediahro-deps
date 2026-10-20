@@ -72,7 +72,19 @@ jobs:
     steps:
       - id: p
         env: { PLATFORMS: "${{ inputs.platforms || 'android,apple,windows' }}" }
-        run: for p in android apple windows; do [[ ",${PLATFORMS// /}," == *",$p,"* ]] && echo "$p=true" >> "$GITHUB_OUTPUT" || echo "$p=false" >> "$GITHUB_OUTPUT"; done
+        # Tags: v…-android.N / v…-apple.N / v…-windows.N build that platform only (a single-platform
+        # pre-release); any other v* tag builds and requires all three.
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            case "$GITHUB_REF_NAME" in
+              *-android.*) PLATFORMS=android ;; *-apple.*) PLATFORMS=apple ;; *-windows.*) PLATFORMS=windows ;;
+              *) PLATFORMS=android,apple,windows ;;
+            esac
+          fi
+          echo "platforms: $PLATFORMS"
+          for p in android apple windows; do
+            [[ ",${PLATFORMS// /}," == *",$p,"* ]] && echo "$p=true" >> "$GITHUB_OUTPUT" || echo "$p=false" >> "$GITHUB_OUTPUT"
+          done
 
   sources:
     # The exact upstream sources of every build (LGPL source offer, docs/09 §2): published with the release.
