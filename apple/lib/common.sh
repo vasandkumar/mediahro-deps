@@ -20,8 +20,13 @@ NO_LTO_LIBS="libvpx"
 OPT_LEVEL=-O2
 
 # set_opt_flags RECIPE : compile/link flags for one library. Measurement
-# switches (one clean build each, ADR-020 table): MEDIAHRO_NO_LTO,
-# MEDIAHRO_NO_GC, MEDIAHRO_ALL_O2.
+# switches (one clean build each, ADR-020 table): MEDIAHRO_LTO, MEDIAHRO_NO_GC,
+# MEDIAHRO_ALL_O2.
+#
+# ThinLTO is opt-in on Apple: measured on ios-arm64 it makes the shipped set
+# 3.6 MB *larger* (ld64's LTO back end inlines across modules: avcodec +1.1 MB,
+# avformat +0.4 MB, mpv +0.3 MB...), while B4a measured it speed-neutral on
+# FFmpeg decode. Section GC, -Os off the hot path and stripping all shrink it.
 set_opt_flags() {
   local r=$1 ld=""
   OPT_LEVEL=-O2
@@ -31,7 +36,7 @@ set_opt_flags() {
     HARDEN_CFLAGS+=" -ffunction-sections -fdata-sections"
     ld+=" -Wl,-dead_strip"
   fi
-  if [ -z "${MEDIAHRO_NO_LTO:-}" ] && ! in_list "$r" $NO_LTO_LIBS; then
+  if [ -n "${MEDIAHRO_LTO:-}" ] && ! in_list "$r" $NO_LTO_LIBS; then
     HARDEN_CFLAGS+=" -flto=thin"
     ld+=" -flto=thin"
   fi

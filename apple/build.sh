@@ -67,12 +67,12 @@ if [ -n "${MEDIAHRO_APPLE_MEASURE:-}" ] && [ -z "${MEDIAHRO_APPLE_VARIANT:-}" ];
     echo "| Variant (ios-arm64, shipped frameworks) | Stripped total | Unstripped total |"
     echo "|---|---:|---:|"
   } >"$table"
-  for v in all no-lto no-gc all-o2; do
+  for v in all thin-lto no-gc all-o2; do
     log "measure: variant $v"
     env_args=(MEDIAHRO_APPLE_VARIANT="$v" MEDIAHRO_APPLE_SLICES=ios-arm64 MEDIAHRO_APPLE_WORK="$WORK/measure-$v"
       MEDIAHRO_APPLE_CACHE="$CACHE")
     case $v in
-      no-lto) env_args+=(MEDIAHRO_NO_LTO=1) ;;
+      thin-lto) env_args+=(MEDIAHRO_LTO=1) ;;
       no-gc) env_args+=(MEDIAHRO_NO_GC=1) ;;
       all-o2) env_args+=(MEDIAHRO_ALL_O2=1) ;;
     esac

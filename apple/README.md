@@ -39,11 +39,20 @@ Each library's `build-info/<name>.json` records the real configure options and t
 Same set as Android (`android/build.sh`), mapped to Apple's toolchain:
 
 - `-O2` on the decode / render / image hot paths; `-Os` for the libraries in `SIZE_LIBS` (`lib/common.sh`).
-- ThinLTO (`-flto=thin`, compile and link) for every library except libvpx (installed as a static archive and wrapped).
 - Section GC: `-ffunction-sections -fdata-sections` with `-Wl,-dead_strip`.
 - `strip -x` on every shipped binary. ld64 / ld-prime has no `--icf=all`.
+- ThinLTO is **off** by default on Apple (`MEDIAHRO_LTO=1` turns it on): on ios-arm64 it makes the shipped set 3.6 MB larger (ld64's LTO back end inlines across modules), and B4a measured it speed-neutral on FFmpeg decode.
 - FFmpeg from the shared `--disable-everything` + docs/04 component list, plus the VideoToolbox / AudioToolbox components in `../flags/ffmpeg.apple.flags`; configure fails on a component name it does not know.
-- `MEDIAHRO_APPLE_MEASURE=1` runs one clean ios-arm64 build per switched-off optimisation (`MEDIAHRO_NO_LTO`, `MEDIAHRO_NO_GC`, `MEDIAHRO_ALL_O2`; stripping from the same build) and writes `apple-size-table.md`.
+- `MEDIAHRO_APPLE_MEASURE=1` runs one clean ios-arm64 build per variant (default set, `MEDIAHRO_LTO`, `MEDIAHRO_NO_GC`, `MEDIAHRO_ALL_O2`; stripping from the same build) and writes `apple-size-table.md`.
+
+Measured (ios-arm64, shipped frameworks, stripped; run 39353528039 with ThinLTO on in every variant):
+
+| Optimisation | Effect |
+|---|---:|
+| ThinLTO | **+3.64 MB** (53.76 vs 50.12 MB) — not used |
+| `-Os` off the hot path | −1.38 MB (glib/gio −0.8, openmpt −0.4, bluray −0.1) |
+| Section GC (`-dead_strip`) | −0.05 MB |
+| `strip -x` | −3.12 MB |
 
 ## Policy notes
 
