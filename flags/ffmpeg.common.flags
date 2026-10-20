@@ -20,7 +20,10 @@
 --extra-cflags=-D_FORTIFY_SOURCE=2 -fstack-protector-strong
 #
 # Install size (docs/11 §5): start from nothing and enable what docs/04 needs.
-# A platform build fails when a name below matches no FFmpeg component (typo guard).
+# Names are configure names (the ff_<name>_<type> symbols in libavcodec/allcodecs.c etc.), not the public codec names:
+# mov_text is `movtext`, EIA-608/CEA-708 is `ccaption`. After configure, scripts/ffmpeg_components.py checks that
+# every name below is enabled in config_components.h, and the build fails otherwise (configure itself only warns when
+# a whole list matches nothing, so one wrong name in a list was silently dropped before v2026.10.5).
 --disable-everything
 --enable-hwaccels
 --enable-parsers
@@ -38,11 +41,13 @@
 --enable-decoder=h264,hevc,av1,libdav1d,vp8,vp9,libvpx_vp8,libvpx_vp9,vvc,mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,h263,h263i,h263p,h261,flv,vp6,vp6a,vp6f,svq1,svq3,wmv1,wmv2,wmv3,wmv3image,vc1,vc1image,rv10,rv20,rv30,rv40,prores,dnxhd,theora,mjpeg,mjpegb,ffv1,hap,huffyuv,ffvhuff,utvideo,rawvideo,cinepak,indeo3,indeo4,indeo5,dvvideo,qtrle,v210
 # VID-003 / AUD-001 audio: AAC, AC-3, E-AC-3, TrueHD/MLP, DTS, FLAC, Opus, Vorbis, MP1-3, PCM, ALAC, WMA, WavPack,
 # APE, TTA, TAK, MPC, DSD (DSF/DFF incl. DST), AMR, RealAudio, ADPCM, tracker modules (libopenmpt).
---enable-decoder=aac,aac_fixed,aac_latm,ac3,ac3_fixed,eac3,truehd,mlp,dca,flac,opus,libopus,vorbis,mp1,mp1float,mp2,mp2float,mp3,mp3float,mp3adu,mp3adufloat,mp3on4,mp3on4float,alac,wmav1,wmav2,wmapro,wmalossless,wmavoice,wavpack,ape,tta,tak,mpc7,mpc8,dsd_lsbf,dsd_msbf,dsd_lsbf_planar,dsd_msbf_planar,dst,amrnb,amrwb,cook,ra_144,ra_288,sipr,atrac3,atrac3p,qdm2,gsm,gsm_ms,speex,libopenmpt,s302m,dolby_e,comfortnoise
+# Tracker modules: libopenmpt is a demuxer in FFmpeg (enabled below), not a decoder.
+--enable-decoder=aac,aac_fixed,aac_latm,ac3,ac3_fixed,eac3,truehd,mlp,dca,flac,opus,libopus,vorbis,mp1,mp1float,mp2,mp2float,mp3,mp3float,mp3adu,mp3adufloat,mp3on4,mp3on4float,alac,wmav1,wmav2,wmapro,wmalossless,wmavoice,wavpack,ape,tta,tak,mpc7,mpc8,dsd_lsbf,dsd_msbf,dsd_lsbf_planar,dsd_msbf_planar,dst,amrnb,amrwb,cook,ra_144,ra_288,sipr,atrac3,atrac3p,qdm2,gsm,gsm_ms,speex,s302m,dolby_e,comfortnoise
 --enable-decoder=pcm_alaw,pcm_mulaw,pcm_s8,pcm_u8,pcm_s16le,pcm_s16be,pcm_s16le_planar,pcm_s16be_planar,pcm_s24le,pcm_s24be,pcm_s24daud,pcm_s32le,pcm_s32be,pcm_s64le,pcm_s64be,pcm_f16le,pcm_f24le,pcm_f32le,pcm_f32be,pcm_f64le,pcm_f64be,pcm_u16le,pcm_u16be,pcm_u24le,pcm_u24be,pcm_u32le,pcm_u32be,pcm_bluray,pcm_dvd,pcm_lxf,pcm_s24le_planar,pcm_s32le_planar,pcm_s8_planar
 --enable-decoder=adpcm_ima_wav,adpcm_ima_qt,adpcm_ms,adpcm_g722,adpcm_g726,adpcm_g726le,adpcm_swf,adpcm_yamaha,adpcm_ima_amv
-# SUB-010 / SUB-011: text and image subtitles.
---enable-decoder=ass,ssa,srt,subrip,webvtt,mov_text,text,sami,microdvd,mpl2,subviewer,subviewer1,realtext,jacosub,pjs,vplayer,stl,eia_608,dvdsub,dvbsub,pgssub,xsub,dvb_teletext
+# SUB-010 / SUB-011: text and image subtitles. DVB teletext is not built: FFmpeg decodes it only through libzvbi, whose
+# library compiles GPL-2-only files (src/packet-830.*, src/pdc.*; zvbi 0.2.45 COPYING.md), and docs/04 has no teletext AC.
+--enable-decoder=ass,ssa,srt,subrip,webvtt,movtext,text,sami,microdvd,mpl2,subviewer,subviewer1,realtext,jacosub,pjs,vplayer,stl,ccaption,dvdsub,dvbsub,pgssub,xsub
 # Cover art, attached pictures, image sequences.
 --enable-decoder=png,apng,bmp,gif,webp,tiff,jpegls,targa,pam,pbm,pgm,ppm,qoi
 #
@@ -53,17 +58,23 @@
 --enable-demuxer=srt,ass,webvtt,sami,microdvd,mpl2,subviewer,subviewer1,realtext,jacosub,pjs,vplayer,stl,lrc,vobsub,sup
 #
 # Protocols (NET-006 and local I/O; TLS comes from the platform, ADR-017).
---enable-protocol=file,pipe,fd,data,async,cache,concat,concatf,subfile,crypto,http,httpproxy,tcp,udp,rtp,rtmp,rtmpt,hls
+# HLS is the hls demuxer (below); FFmpeg 8 has no hls protocol.
+--enable-protocol=file,pipe,fd,data,async,cache,concat,concatf,subfile,crypto,http,httpproxy,tcp,udp,rtp,rtmp,rtmpt
 #
 # Encoders and muxers. VID-042: screenshots (PNG, JPEG XL, WebP, JPEG), GIF/WebP animation, lossless trim (stream
 # copy). CAST-005: H.264/AAC transcode (hardware encoders are added per platform), remux to MP4/fMP4, Matroska,
 # MPEG-TS/HLS, WebVTT subtitles. VID-004 passthrough: spdif.
---enable-encoder=png,mjpeg,gif,libwebp,libwebp_anim,libjxl,aac,ac3,pcm_s16le,webvtt,mov_text,ass,ssa,srt,subrip
+--enable-encoder=png,mjpeg,gif,libwebp,libwebp_anim,libjxl,aac,ac3,pcm_s16le,webvtt,movtext,ass,ssa,srt,subrip
 --enable-muxer=matroska,webm,mp4,mov,ipod,mpegts,hls,segment,gif,image2,image2pipe,webp,adts,ac3,eac3,spdif,webvtt,srt,ass,null,ogg,opus,flac,wav
 #
 # Filters. mpv's lavfi plumbing (format/scale/aresample/hw*); VID-037 (deinterlace, rotate/flip, crop/pad, sharpen);
 # VID-042 GIF palette; AUD-004 loudness; AUD-005 EQ, limiter, balance, mono, channel mixer, crossfeed, bass/treble;
 # AUD-003 crossfade.
---enable-filter=buffer,buffersink,abuffer,abuffersink,format,aformat,null,anull,scale,aresample,hwupload,hwdownload,hwmap,setpts,asetpts,settb,asettb,fps,split,asplit,copy,trim,atrim,concat
+# buffer/buffersink/abuffer/abuffersink are part of libavfilter's API in FFmpeg 8 and always built.
+--enable-filter=format,aformat,null,anull,scale,aresample,hwupload,hwdownload,hwmap,setpts,asetpts,settb,asettb,fps,split,asplit,copy,trim,atrim,concat
 --enable-filter=yadif,bwdif,transpose,hflip,vflip,rotate,crop,pad,setsar,setdar,unsharp,palettegen,paletteuse
+# VID-041 (ADR-033): 3D side-by-side/top-bottom to anaglyph or 2D (lutrgb, blend; crop/setsar above) and 360° / VR180 to
+# a flat view (v360). All LGPL-2.1+. Never stereo3d: vf_stereo3d.c is GPL (stereo3d_filter_deps="gpl");
+# scripts/ffmpeg_components.py fails the build if it, or any other GPL-only component, is enabled.
+--enable-filter=lutrgb,blend,v360
 --enable-filter=volume,equalizer,superequalizer,anequalizer,firequalizer,biquad,bass,treble,lowpass,highpass,bandpass,bandreject,lowshelf,highshelf,alimiter,acompressor,pan,channelmap,channelsplit,amerge,amix,stereotools,crossfeed,extrastereo,afade,acrossfade,loudnorm,ebur128,dynaudnorm,silenceremove,showspectrum,showwaves,showvolume,astats,aloop
