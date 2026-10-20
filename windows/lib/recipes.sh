@@ -1,15 +1,17 @@
 # Per-library build recipes for windows/build.sh (sourced).
-# Each r_<name> runs in a subshell with B (its build dir), T, PREFIX, ARCH set,
-# installs into $PREFIX, records licences with `license` and what it produced
-# with `built`. Order matters: dependencies first.
+# Each r_<recipe> runs in a subshell with B (its build dir), T, PREFIX, ARCH
+# set; it builds the verified source from fetch (scripts/sources.py), installs
+# into $PREFIX, records licences with `license`, and writes build-info with
+# `built` (configure arguments, produced files, GPL source scan). Library names
+# are the ones in versions.json. Order matters: dependencies first.
 # shellcheck shell=bash
 
 RECIPES="zlib bzip2 xz zstd expat
 vulkan_headers vulkan_loader spirv_cross shaderc
-lcms2 dav1d libogg opus flac libvpx libopenmpt ffmpeg
-freetype fribidi harfbuzz fontconfig libass libplacebo uchardet win_iconv libjpeg_turbo libudfread libbluray mpv
-libspng libwebp libdeflate libtiff imath openexr cgif highway brotli libjxl libavif libraw libexif glib libvips
-libssh2 curl libsmb2 libnfs libarchive libebur128 chromaprint whisper_cpp vvdec"
+lcms2 dav1d libogg opus flac libvpx libopenmpt libwebp highway brotli libjxl win_iconv ffmpeg
+freetype fribidi harfbuzz fontconfig libass libplacebo uchardet libjpeg_turbo libudfread libbluray mpv
+libspng libdeflate libtiff imath openexr cgif libavif libraw libexif pcre2 proxy_libintl libffi glib libvips
+libssh2 curl libsmb2 libnfs libarchive libebur128 chromaprint whisper_cpp"
 
 # ------------------------------------------------------------ compression
 
@@ -60,11 +62,11 @@ r_vulkan_headers() {
   local s; s=$(fetch vulkan-headers)
   cmake_build "$s" "$B" -DVULKAN_HEADERS_ENABLE_TESTS=OFF -DVULKAN_HEADERS_ENABLE_MODULE=OFF
   license vulkan-headers "$s/LICENSE.md"
-  built vulkan-headers
+  built vulkan-headers --header
 }
 
 # Import library only: vulkan-1.dll belongs to the GPU driver install and is
-# delay-loaded by libplacebo and mpv (stage_target does not ship it).
+# delay-loaded by libplacebo and mpv (stage.sh does not ship it).
 r_vulkan_loader() {
   local s; s=$(fetch vulkan-loader)
   # USE_MASM=OFF: only the import library is used, and the arm64 armasm
@@ -72,7 +74,7 @@ r_vulkan_loader() {
   cmake_build "$s" "$B" -DBUILD_TESTS=OFF -DBUILD_WERROR=OFF -DUPDATE_DEPS=OFF -DUSE_MASM=OFF \
     -DVulkanHeaders_DIR="$(w "$PREFIX/share/cmake/VulkanHeaders")"
   license vulkan-loader "$s/LICENSE.txt"
-  built vulkan-loader
+  built vulkan-loader --files vulkan-1.lib
 }
 
 r_spirv_cross() {
@@ -99,7 +101,10 @@ r_shaderc() {
   license glslang "$g/LICENSE.txt"
   license spirv-tools "$t/LICENSE"
   license spirv-headers "$h/LICENSE"
-  built shaderc glslang spirv-tools spirv-headers
+  built shaderc --files "shaderc_shared.dll shaderc_shared.lib"
+  built glslang --into shaderc_shared.dll
+  built spirv-tools --into shaderc_shared.dll
+  built spirv-headers --header
 }
 
 # ------------------------------------------------------------ codecs
@@ -155,8 +160,9 @@ r_libvpx() {
   rm -rf "$B"; mkdir -p "$B"; cd "$B"
   export CL="-guard:cf -GS -Gy -Zc:inline"
   local as=(); [ "$ARCH" = x64 ] && as=(--as=nasm)
-  "$s/configure" --target="$VPX_ARCH-win64-vs$vs" "${as[@]}" --disable-examples --disable-tools --disable-docs \
-    --disable-unit-tests --enable-vp8 --enable-vp9 --enable-vp9-highbitdepth --disable-install-bins --disable-install-srcs
+  CONF_ARGS=(--target="$VPX_ARCH-win64-vs$vs" "${as[@]}" --disable-examples --disable-tools --disable-docs
+             --disable-unit-tests --enable-vp8 --enable-vp9 --enable-vp9-highbitdepth --disable-install-bins --disable-install-srcs)
+  "$s/configure" "${CONF_ARGS[@]}"
   make -j"$JOBS"
   out=$(find "$B" -name vpxmd.lib -path "*Release*" | head -1)
   [ -n "$out" ] || { echo "vpxmd.lib not produced"; return 1; }
@@ -173,12 +179,12 @@ includedir=\${prefix}/include
 
 Name: vpx
 Description: WebM Project VPx codec implementation
-Version: $(pin libvpx version)
+Version: $(version_of libvpx)
 Libs: -L\${libdir} -lvpx
 Cflags: -I\${includedir}
 PC
   license libvpx "$s/LICENSE" "$s/PATENTS"
-  built libvpx
+  built libvpx --files "vpx.dll vpx.lib"
 }
 
 r_libopenmpt() {
@@ -188,21 +194,55 @@ r_libopenmpt() {
   built libopenmpt
 }
 
+r_libwebp() {
+  local s; s=$(fetch libwebp)
+  cmake_build "$s" "$B" -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
+    -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF \
+    -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF -DWEBP_BUILD_LIBWEBPMUX=ON -DWEBP_LINK_STATIC=OFF
+  license libwebp "$s/COPYING" "$s/PATENTS"
+  built libwebp
+}
+
+r_highway() {
+  local s; s=$(fetch highway)
+  cmake_build "$s" "$B" -DHWY_ENABLE_TESTS=OFF -DHWY_ENABLE_EXAMPLES=OFF -DHWY_ENABLE_CONTRIB=OFF -DHWY_ENABLE_INSTALL=ON
+  license highway "$s/LICENSE"
+  built highway
+}
+
+r_brotli() {
+  local s; s=$(fetch brotli)
+  cmake_build "$s" "$B" -DBROTLI_BUILD_TOOLS=OFF -DBROTLI_DISABLE_TESTS=ON
+  license brotli "$s/LICENSE"
+  built brotli
+}
+
+r_libjxl() {
+  local s; s=$(fetch libjxl)
+  cmake_build "$s" "$B" -DJPEGXL_ENABLE_TOOLS=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_MANPAGES=OFF \
+    -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF \
+    -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF \
+    -DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_DEVTOOLS=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF -DJPEGXL_ENABLE_TRANSCODE_JPEG=ON \
+    -DJPEGXL_FORCE_SYSTEM_LCMS2=ON -DJPEGXL_FORCE_SYSTEM_BROTLI=ON -DJPEGXL_FORCE_SYSTEM_HWY=ON \
+    -DJPEGXL_WARNINGS_AS_ERRORS=OFF -DJPEGXL_STATIC=OFF
+  license libjxl "$s/LICENSE" "$s/PATENTS"
+  built libjxl
+}
+
+r_win_iconv() {
+  local s; s=$(fetch win-iconv)
+  cmake_build "$s" "$B" -DWIN_ICONV_BUILD_STATIC=OFF -DWIN_ICONV_BUILD_EXECUTABLE=OFF -DWIN_ICONV_BUILD_TEST=OFF
+  license win-iconv "$s/readme.txt"
+  built win-iconv
+}
+
 # FFmpeg: LGPL-2.1+ (no --enable-gpl/nonfree/version3), shared, flags from
 # flags/ffmpeg.common.flags + flags/ffmpeg.windows.flags, clang-cl via the
 # msvc toolchain; arm64 assembly through clang-cl's integrated assembler.
 r_ffmpeg() {
-  local s args=() cross=() cc; s=$(fetch ffmpeg)
+  local s args=() cross=() cc f; s=$(fetch ffmpeg)
   rm -rf "$B"; mkdir -p "$B"; cd "$B"
-  local f help; help=$("$s/configure" --help)
-  while IFS= read -r f; do
-    # A --disable-X for a component this FFmpeg no longer has (libpostproc
-    # was removed in 8.0) is a no-op; configure would reject it.
-    if [[ $f == --disable-* ]] && ! grep -q -- "${f#--disable-}" <<<"$help"; then
-      echo "ffmpeg: dropping $f (not an option of this FFmpeg)"; continue
-    fi
-    args+=("$f")
-  done < <(flags_of "$ROOT/flags/ffmpeg.common.flags"; flags_of "$ROOT/flags/ffmpeg.windows.flags")
+  mapfile -t args < <(flags_of "$ROOT/flags/ffmpeg.common.flags"; flags_of "$ROOT/flags/ffmpeg.windows.flags")
   cc="clang-cl -target $CLANG_TARGET"
   local host=(--host-cc=clang-cl --host-ld="$s/compat/windows/mslink")
   if [ "$ARCH" = arm64 ]; then
@@ -217,13 +257,15 @@ r_ffmpeg() {
   fi
   # Host tools (table generators) link with MSVC link.exe like the libraries;
   # clang-cl from the LLVM release would otherwise drive lld-link.
-  "$s/configure" "${args[@]}" "${cross[@]}" --arch="$FF_ARCH" --cc="$cc" --cxx="$cc" \
-    "${host[@]}" \
-    --pkg-config=pkgconf --prefix="$(w "$PREFIX")" \
-    --extra-cflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")" --extra-cxxflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")" \
-    --extra-ldflags="$HARDEN_LDFLAGS -LIBPATH:$(w "$PREFIX/lib")" \
-    || { tail -80 ffbuild/config.log; return 1; }
-  grep -E "^(License|Enabled hwaccels|External libraries)" -A3 ffbuild/config.log 2>/dev/null | head -20 || true
+  CONF_ARGS=("${args[@]}" "${cross[@]}" --arch="$FF_ARCH" --cc="$cc" --cxx="$cc" "${host[@]}"
+             --pkg-config=pkgconf --prefix="$(w "$PREFIX")"
+             --extra-cflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")" --extra-cxxflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")"
+             --extra-ldflags="$HARDEN_LDFLAGS -LIBPATH:$(w "$PREFIX/lib")")
+  "$s/configure" "${CONF_ARGS[@]}" > configure.out 2>&1 || { cat configure.out; tail -80 ffbuild/config.log; return 1; }
+  cat configure.out
+  # --disable-everything makes every component explicit: a misspelt name must
+  # not drop a format silently (same guard as android/build.sh).
+  if grep -E "did not match anything|Unknown option" configure.out; then echo "ffmpeg: fix the flags above"; return 1; fi
   make -j"$JOBS"
   make install
   # The msvc toolchain installs import libraries next to the DLLs.
@@ -250,15 +292,16 @@ r_fribidi() {
 
 r_harfbuzz() {
   local s; s=$(fetch harfbuzz)
+  # MSVC's STL needs C++14+; harfbuzz defaults to C++11.
   meson_build "$s" "$B" -Dfreetype=enabled -Dgdi=enabled -Ddirectwrite=enabled -Dglib=disabled -Dgobject=disabled \
     -Dcairo=disabled -Dchafa=disabled -Dicu=disabled -Dpng=disabled -Dzlib=disabled -Dgraphite2=disabled \
     -Draster=disabled -Dvector=disabled -Dgpu=disabled -Dtests=disabled -Dintrospection=disabled -Ddocs=disabled \
-    -Dutilities=disabled -Dbenchmark=disabled -Dcpp_std=c++17  # MSVC STL needs C++14+; harfbuzz defaults to c++11
+    -Dutilities=disabled -Dbenchmark=disabled -Dcpp_std=c++17
   license harfbuzz "$s/COPYING"
   built harfbuzz
 }
 
-# gperf (GPL) is replaced by patches/fontconfig's generator for fcobjshash.h.
+# gperf (GPL) is replaced by patches/fontconfig's gperf-lite.py.
 r_fontconfig() {
   local s; s=$(fetch fontconfig)
   meson_build "$s" "$B" -Ddoc=disabled -Dnls=disabled -Dtests=disabled -Dtools=disabled -Dcache-build=disabled \
@@ -286,7 +329,8 @@ r_libplacebo() {
     meson_build "$s" "$B" "${args[@]}" -Dvulkan-registry="$(w "$PREFIX/share/vulkan/registry/vk.xml")"
   license libplacebo "$s/LICENSE"
   license fast_float "$ff/LICENSE-MIT"
-  built libplacebo fast_float
+  built libplacebo
+  built fast_float --header
 }
 
 r_uchardet() {
@@ -294,13 +338,6 @@ r_uchardet() {
   cmake_build "$s" "$B" -DBUILD_BINARY=OFF -DBUILD_STATIC=OFF
   license uchardet "$s/COPYING"
   built uchardet
-}
-
-r_win_iconv() {
-  local s; s=$(fetch win-iconv)
-  cmake_build "$s" "$B" -DWIN_ICONV_BUILD_STATIC=OFF -DWIN_ICONV_BUILD_EXECUTABLE=OFF -DWIN_ICONV_BUILD_TEST=OFF
-  license win-iconv "$s/readme.txt"
-  built win-iconv
 }
 
 r_libjpeg_turbo() {
@@ -334,7 +371,6 @@ r_mpv() {
   mapfile -t args <<<"$fl"
   [ ${#args[@]} -ge 5 ] || { echo "mpv: flag list empty"; return 1; }
   MESON_EXTRA_LDFLAGS="-DELAYLOAD:vulkan-1.dll delayimp.lib" meson_build "$s" "$B" "${args[@]}"
-  grep -q "gpl.*false\|GPL.*disabled\|LGPL" "$B/meson-logs/meson-log.txt" || true
   license mpv "$s/LICENSE.LGPL" "$s/Copyright"
   built mpv
 }
@@ -352,22 +388,13 @@ includedir=\${prefix}/include
 
 Name: libspng
 Description: PNG decoding and encoding library
-Version: $(pin libspng version)
+Version: $(version_of libspng)
 Requires.private: zlib
 Libs: -L\${libdir} -lspng
 Cflags: -I\${includedir}
 PC
   license libspng "$s/LICENSE"
   built libspng
-}
-
-r_libwebp() {
-  local s; s=$(fetch libwebp)
-  cmake_build "$s" "$B" -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
-    -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF \
-    -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF -DWEBP_BUILD_LIBWEBPMUX=ON -DWEBP_LINK_STATIC=OFF
-  license libwebp "$s/COPYING" "$s/PATENTS"
-  built libwebp
 }
 
 r_libdeflate() {
@@ -415,32 +442,6 @@ r_cgif() {
   built cgif
 }
 
-r_highway() {
-  local s; s=$(fetch highway)
-  cmake_build "$s" "$B" -DHWY_ENABLE_TESTS=OFF -DHWY_ENABLE_EXAMPLES=OFF -DHWY_ENABLE_CONTRIB=OFF -DHWY_ENABLE_INSTALL=ON
-  license highway "$s/LICENSE"
-  built highway
-}
-
-r_brotli() {
-  local s; s=$(fetch brotli)
-  cmake_build "$s" "$B" -DBROTLI_BUILD_TOOLS=OFF -DBROTLI_DISABLE_TESTS=ON
-  license brotli "$s/LICENSE"
-  built brotli
-}
-
-r_libjxl() {
-  local s; s=$(fetch libjxl)
-  cmake_build "$s" "$B" -DJPEGXL_ENABLE_TOOLS=OFF -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_MANPAGES=OFF \
-    -DJPEGXL_ENABLE_BENCHMARK=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_JNI=OFF -DJPEGXL_ENABLE_SJPEG=OFF \
-    -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SKCMS=OFF -DJPEGXL_ENABLE_PLUGINS=OFF -DJPEGXL_ENABLE_VIEWERS=OFF \
-    -DJPEGXL_ENABLE_FUZZERS=OFF -DJPEGXL_ENABLE_DEVTOOLS=OFF -DJPEGXL_BUNDLE_LIBPNG=OFF -DJPEGXL_ENABLE_TRANSCODE_JPEG=ON \
-    -DJPEGXL_FORCE_SYSTEM_LCMS2=ON -DJPEGXL_FORCE_SYSTEM_BROTLI=ON -DJPEGXL_FORCE_SYSTEM_HWY=ON \
-    -DJPEGXL_WARNINGS_AS_ERRORS=OFF -DJPEGXL_STATIC=OFF
-  license libjxl "$s/LICENSE" "$s/PATENTS"
-  built libjxl
-}
-
 # Decode-only AVIF through dav1d; sharpyuv from libwebp.
 r_libavif() {
   local s; s=$(fetch libavif)
@@ -460,39 +461,52 @@ r_libraw() {
 
 r_libexif() {
   local s; s=$(fetch libexif)
-  cmake_build "$HERE/cmake/libexif" "$B" -DLIBEXIF_SRC="$(w "$s")" -DLIBEXIF_VERSION="$(pin libexif version)"
+  cmake_build "$HERE/cmake/libexif" "$B" -DLIBEXIF_SRC="$(w "$s")" -DLIBEXIF_VERSION="$(version_of libexif)"
   license libexif "$s/COPYING"
   built libexif
 }
 
-# pcre2 and libffi come from glib's own wraps (meson verifies their hashes);
-# both permissive and built as DLLs.
+# glib's dependencies from their pinned sources (versions.json), so glib's
+# meson finds them installed and needs none of its download wraps.
+r_pcre2() {
+  local s; s=$(fetch pcre2)
+  cmake_build "$s" "$B" -DPCRE2_BUILD_PCRE2_8=ON -DPCRE2_BUILD_PCRE2_16=OFF -DPCRE2_BUILD_PCRE2_32=OFF \
+    -DPCRE2_SUPPORT_JIT=OFF -DPCRE2_BUILD_PCRE2GREP=OFF -DPCRE2_BUILD_TESTS=OFF -DPCRE2_SUPPORT_UNICODE=ON \
+    -DPCRE2_STATIC_RUNTIME=OFF -DINSTALL_MSVC_PDB=OFF
+  license pcre2 "$s/LICENCE.md"
+  built pcre2
+}
+
+r_proxy_libintl() {
+  local s; s=$(fetch proxy-libintl)
+  meson_build "$s" "$B"
+  license proxy-libintl "$s/COPYING"
+  built proxy-libintl
+}
+
+# libffi has no MSVC build of its own: wrapdb's meson port (build files only,
+# pinned in deps.json) over the verified source, taking the armasm64 path
+# under clang-cl on arm64 (lib/patch_libffi_wrap.py).
+r_libffi() {
+  local s port; s=$(fetch libffi); port=$(tool libffi-meson-port)
+  cp -r "$port/." "$s/"
+  "$HOST_PY" -I "$(w "$HERE/lib/patch_libffi_wrap.py")" "$(w "$s")"
+  meson_build "$s" "$B" -Dtests=false
+  license libffi "$s/LICENSE"
+  built libffi
+}
+
 r_glib() {
-  local s ffi; s=$(fetch glib)
-  # Fetch the wraps (meson checks their hashes), then let libffi's port take
-  # its armasm64 path under clang-cl on arm64 (lib/patch_libffi_wrap.py).
-  (cd "$s" && meson subprojects download libffi pcre2 proxy-libintl)
-  for ffi in "$s"/subprojects/libffi-*/; do
-    "$HOST_PY" -I "$(w "$HERE/lib/patch_libffi_wrap.py")" "$(w "$ffi")"
-  done
-  meson_build "$s" "$B" --wrap-mode=default -Dtests=false -Dinstalled_tests=false -Dnls=disabled \
-    -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled -Dsysprof=disabled -Dlibelf=disabled \
-    -Dpcre2:test=false -Dpcre2:grep=false
+  local s; s=$(fetch glib)
+  meson_build "$s" "$B" --wrap-mode=nofallback --force-fallback-for=gvdb -Dtests=false -Dinstalled_tests=false \
+    -Dnls=disabled -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled -Dsysprof=disabled -Dlibelf=disabled
   license glib "$s/COPYING" "$s/LICENSES/LGPL-2.1-or-later.txt"
-  local d; for d in "$s"/subprojects/pcre2-* "$s"/subprojects/libffi-* "$s"/subprojects/proxy-libintl-*; do
-    [ -d "$d" ] || continue
-    case $d in
-      *pcre2*) license pcre2 "$d/LICENCE.md" ;;
-      *libffi*) license libffi "$d/LICENSE" ;;
-      *proxy-libintl*) license proxy-libintl "$d/COPYING" ;;
-    esac
-  done
-  built glib pcre2 libffi proxy-libintl
+  built glib
 }
 
 r_libvips() {
   local s fl args=(); s=$(fetch libvips)
-  fl=$(shared_meson_flags "$s" "$ROOT/flags/vips.flags"; flags_of "$HERE/flags/vips.flags")
+  fl=$(shared_meson_flags "$s" "$ROOT/flags/vips.flags")
   mapfile -t args <<<"$fl"
   # libvips calls close()/read() without <io.h>, where the MSVC CRT declares them.
   MESON_EXTRA_CFLAGS="-FIio.h" meson_build "$s" "$B" "${args[@]}"
@@ -501,7 +515,7 @@ r_libvips() {
 }
 
 # -------------------------------------------------------------- network
-# OS crypto only (docs/07 rule 12): libssh2 on WinCNG, curl on Schannel/SSPI.
+# OS crypto only (docs/07 rule 12, ADR-017): libssh2 on WinCNG, curl on Schannel/SSPI.
 
 r_libssh2() {
   local s; s=$(fetch libssh2)
@@ -531,10 +545,14 @@ r_libsmb2() {
 }
 
 r_libnfs() {
-  local s; s=$(fetch libnfs)
+  local s d; s=$(fetch libnfs)
   cmake_build "$s" "$B" -DENABLE_UTILS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_DOCUMENTATION=OFF
-  # win32/libnfs.def says "LIBRARY libnfs", so nfs.lib imports from libnfs.dll.
-  mv -f "$PREFIX/bin/nfs.dll" "$PREFIX/bin/libnfs.dll"
+  # The import library must name the DLL file it ships as.
+  if [ -f "$PREFIX/bin/nfs.dll" ] && ! [ -f "$PREFIX/bin/libnfs.dll" ]; then
+    d=$("$HOST_PY" -I -c "import sys; sys.path.insert(0, sys.argv[1]); import stage_libs, pathlib; print(' '.join(stage_libs.import_dlls(pathlib.Path(sys.argv[2]))))" \
+        "$(w "$HERE/lib")" "$(w "$PREFIX/lib/nfs.lib")" | tr -d '\r')
+    [ "$d" = libnfs.dll ] && mv -f "$PREFIX/bin/nfs.dll" "$PREFIX/bin/libnfs.dll"
+  fi
   license libnfs "$s/COPYING" "$s/LICENCE-LGPL-2.1.txt"
   built libnfs
 }
@@ -577,18 +595,4 @@ r_whisper_cpp() {
     -DWHISPER_SDL=OFF -DGGML_BUILD_TESTS=OFF -DGGML_BUILD_EXAMPLES=OFF
   license whisper.cpp "$s/LICENSE"
   built whisper.cpp
-}
-
-# VVC software decoder (BSD-3-Clause-Clear, optional in versions.json).
-# Like OpenEXR, vvdec uses SSE4.1 intrinsics in generic code whenever _MSC_VER
-# is set (SSE4.1 baseline); clang-cl needs that, and xsave for _xgetbv.
-r_vvdec() {
-  local s; s=$(fetch vvdec)
-  [ "$ARCH" = x64 ] && export CFLAGS="-msse4.1 -mxsave" CXXFLAGS="-msse4.1 -mxsave"
-  # arm64: baseline NEON. Windows has no SVE support, and vvdec's RDM/SVE probes
-  # use GCC -march flags that clang-cl merely ignores (so they pass falsely).
-  local arm=(); [ "$ARCH" = arm64 ] && arm=(-DVVDEC_ENABLE_ARM_SIMD_RDM=OFF -DVVDEC_ENABLE_ARM_SIMD_SVE=OFF -DVVDEC_ENABLE_ARM_SIMD_SVE2=OFF)
-  cmake_build "$s" "$B" "${arm[@]}" -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF -DVVDEC_ENABLE_WERROR=OFF
-  license vvdec "$s/LICENSE.txt"
-  built vvdec
 }

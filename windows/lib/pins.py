@@ -1,16 +1,13 @@
-"""Resolve, download and verify the sources the Windows build uses.
+"""Fetch and verify the Windows build tools pinned in windows/deps.json.
 
-Pins come from ../versions.json (lane B4a). windows/deps.json adds:
-  toolchain  build-only tools (LLVM, nasm, pkgconf, gas-preprocessor, pip wheels)
-  extra      transitive libraries that ship in the archive but are not in versions.json
-  fallback   version + sha256 used only while a versions.json entry is still unpinned
-Every download is checked against its SHA-256 before it is extracted.
+Library sources come from versions.json through scripts/sources.py (lane B4a);
+this only covers the toolchain the Windows build adds (LLVM clang-cl, nasm,
+pkgconf). Every download is checked against its SHA-256 before extraction.
 
 Usage:
-  pins.py get NAME FIELD          print version | url | sha256 | license | dir
-  pins.py fetch NAME CACHE SRCDIR extract NAME into SRCDIR/<dir>, print that path
-  pins.py pkgroot OUT BUILT       write a packaging root for scripts/package.py
-  pins.py tofu NAME CACHE         download NAME and print its SHA-256 (pinning aid)
+  pins.py get NAME FIELD           print version | url | sha256
+  pins.py fetch NAME CACHE DEST    extract NAME into DEST/<name>-<version>, print that path
+  pins.py tofu NAME CACHE          download NAME and print its SHA-256 (pinning aid)
 """
 
 from __future__ import annotations
@@ -19,86 +16,23 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import urllib.request
 import zipfile
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-WIN = HERE.parent
-ROOT = WIN.parent
-
-
-def _load() -> tuple[dict, dict]:
-    versions = json.loads((ROOT / "versions.json").read_text(encoding="utf-8"))
-    deps = json.loads((WIN / "deps.json").read_text(encoding="utf-8"))
-    return versions, deps
-
-
-def _expand(template: str, version: str) -> str:
-    series = ".".join(version.split(".")[:2])
-    return (template.replace("{version}", version).replace("{series}", series)
-            .replace("{underscore}", version.replace(".", "_")))
+WIN = Path(__file__).resolve().parent.parent
 
 
 def resolve(name: str) -> dict:
-    versions, deps = _load()
-    for section in ("toolchain", "extra"):
-        if name in deps[section]:
-            e = dict(deps[section][name])
-            e["name"] = name
-            e["url"] = _expand(e["source"], e["version"])
-            return e
-    for lib in versions["libraries"]:
-        if lib["name"] != name:
-            continue
-        e = dict(lib)
-        fb = deps["fallback"].get(name, {})
-        if not e.get("version"):
-            if not fb:
-                raise SystemExit(f"pins: {name} is not pinned in versions.json and has no windows fallback")
-            e["version"], e["sha256"] = fb["version"], fb["sha256"]
-            e["source"] = fb.get("source", e["source"])
-            e["pinned_by"] = "windows/deps.json fallback"
-        elif fb.get("source") and fb.get("version") == e["version"]:
-            e["source"] = fb["source"]
-        e["url"] = _expand(e["source"], e["version"])
-        return e
-    raise SystemExit(f"pins: unknown source {name}")
-
-
-def _archive_name(e: dict) -> str:
-    base = e["url"].split("?")[0].rstrip("/").split("/")[-1]
-    return f"{e['name']}-{e['version']}--{base}"
-
-
-def _download(e: dict, cache: Path) -> Path:
-    cache.mkdir(parents=True, exist_ok=True)
-    dest = cache / _archive_name(e)
-    if dest.exists() and e.get("sha256") and _sha256(dest) == e["sha256"]:
-        return dest
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    urls = [e["url"]]
-    deps = _load()[1]
-    for prefix, alts in deps.get("mirrors", {}).items():
-        if e["url"].startswith(prefix):
-            urls += [a + e["url"][len(prefix):] for a in alts]
-    # Per-source mirror templates (same bytes; the SHA-256 check still applies).
-    urls += [_expand(t, e["version"]) for t in deps.get("source_mirrors", {}).get(e["name"], [])]
-    errors = []
-    for attempt in range(6):
-        for url in urls:
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "mediahro-deps-build"})
-                with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:  # noqa: S310 - pinned URL, hash-checked
-                    shutil.copyfileobj(r, f, 1 << 20)
-                tmp.replace(dest)
-                return dest
-            except OSError as err:
-                errors.append(f"{url}: {err}")
-        time.sleep(15 * (attempt + 1))
-    raise SystemExit("pins: download failed:\n  " + "\n  ".join(errors))
+    tools = json.loads((WIN / "deps.json").read_text(encoding="utf-8"))["toolchain"]
+    if name not in tools:
+        raise SystemExit(f"pins: unknown tool {name}")
+    e = dict(tools[name], name=name)
+    e["url"] = e["source"].replace("{version}", e["version"])
+    return e
 
 
 def _sha256(p: Path) -> str:
@@ -109,19 +43,27 @@ def _sha256(p: Path) -> str:
     return h.hexdigest()
 
 
-def _verified(e: dict, cache: Path) -> Path:
-    if not e.get("sha256"):
-        raise SystemExit(f"pins: {e['name']} {e['version']} has no sha256; refusing to build an unverified source")
-    path = _download(e, cache)
-    digest = _sha256(path)
-    if digest != e["sha256"]:
-        path.unlink()
-        raise SystemExit(f"pins: SHA-256 mismatch for {e['name']}: got {digest}, pinned {e['sha256']}")
-    return path
+def _download(e: dict, cache: Path) -> Path:
+    cache.mkdir(parents=True, exist_ok=True)
+    dest = cache / f"{e['name']}-{e['version']}--{e['url'].rsplit('/', 1)[-1]}"
+    if dest.exists() and e.get("sha256") and _sha256(dest) == e["sha256"]:
+        return dest
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    for attempt in range(6):
+        try:
+            req = urllib.request.Request(e["url"], headers={"User-Agent": "mediahro-deps-build"})
+            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:  # noqa: S310 - pinned, hash-checked
+                shutil.copyfileobj(r, f, 1 << 20)
+            tmp.replace(dest)
+            return dest
+        except OSError as err:
+            if attempt == 5:
+                raise SystemExit(f"pins: download failed: {e['url']}: {err}")
+            time.sleep(15 * (attempt + 1))
+    return dest
 
 
 def _extract(archive: Path, dest: Path) -> None:
-    """Extract, stripping the single top-level directory most tarballs have."""
     tmp = dest.with_name(dest.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
@@ -129,91 +71,43 @@ def _extract(archive: Path, dest: Path) -> None:
     if name.endswith(".zip"):
         with zipfile.ZipFile(archive) as z:
             z.extractall(tmp)
-    elif name.endswith((".tar.zst", ".tzst", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar")):
-        # MSYS2 tar: handles every compressor here and turns symlinks into copies.
-        import subprocess
-
+    else:  # .tar.* through MSYS2 tar (zstd with a long window for LLVM)
         tar = os.environ.get("MEDIAHRO_TAR", "tar")
-        extra = ["--use-compress-program=zstd -d --long=31"] if name.endswith((".zst", ".tzst")) else []
-        cmd = [tar, "--force-local", *extra, "-xf", archive.as_posix(), "-C", tmp.as_posix()]
-        # Symlinks become copies, which fails when the target is extracted
-        # later (or never exists); a second pass fills in the forward links.
-        for extra_pass in ([], ["--skip-old-files"]):
-            r = subprocess.run(cmd + extra_pass, capture_output=True, text=True)
-            if r.returncode == 0:
-                break
-        bad = [ln for ln in r.stderr.splitlines() if ln.strip() and "Cannot create symlink" not in ln and "Exiting with failure status" not in ln]
-        if bad:
-            raise SystemExit(f"pins: extracting {archive.name} failed:\n" + "\n".join(bad))
-    else:  # single file (scripts, headers)
-        shutil.copy2(archive, tmp / name.split("--", 1)[1])
+        extra = ["--use-compress-program=zstd -d --long=31"] if name.endswith(".zst") else []
+        subprocess.run([tar, "--force-local", *extra, "-xf", archive.as_posix(), "-C", tmp.as_posix()], check=True)
     entries = list(tmp.iterdir())
     src = entries[0] if len(entries) == 1 and entries[0].is_dir() else tmp
     shutil.rmtree(dest, ignore_errors=True)
-    src.replace(dest) if src is not tmp else tmp.replace(dest)
+    src.replace(dest)
     shutil.rmtree(tmp, ignore_errors=True)
 
 
-def fetch(name: str, cache: Path, srcdir: Path) -> Path:
+def fetch(name: str, cache: Path, root: Path) -> Path:
     e = resolve(name)
-    dest = srcdir / f"{name}-{e['version']}"
+    dest = root / f"{name}-{e['version']}"
     stamp = dest / ".mediahro-sha256"
     if stamp.exists() and stamp.read_text().strip() == e["sha256"]:
         return dest
-    archive = _verified(e, cache)
+    archive = _download(e, cache)
+    digest = _sha256(archive)
+    if digest != e["sha256"]:
+        archive.unlink()
+        raise SystemExit(f"pins: SHA-256 mismatch for {name}: got {digest}, pinned {e['sha256']}")
     _extract(archive, dest)
     stamp.write_text(e["sha256"])
     return dest
 
 
-def pkgroot(root: Path, out: Path, built: list[str]) -> None:
-    """Packaging root for scripts/package.py: the repo's versions.json with the
-    windows fallback pins filled in, the windows-only transitive libraries
-    appended, and only the libraries this build actually produced listed, so
-    manifest.json describes exactly what is in the archive."""
-    versions, deps = _load()
-    shutil.rmtree(out, ignore_errors=True)
-    (out / "scripts").mkdir(parents=True)
-    shutil.copy2(root / "scripts" / "package.py", out / "scripts" / "package.py")
-    shutil.copytree(root / "flags", out / "flags")
-    for f in (WIN / "flags").glob("*.flags"):
-        shutil.copy2(f, out / "flags" / f"windows-extra-{f.name}")
-    libs = []
-    for lib in versions["libraries"]:
-        if "platforms" in lib and "windows" not in lib["platforms"]:
-            continue
-        if lib["name"] not in built:
-            continue
-        e = dict(lib)
-        if not e.get("version"):
-            fb = deps["fallback"][lib["name"]]
-            e["version"], e["sha256"] = fb["version"], fb["sha256"]
-        extra_flags = WIN / "flags" / f"{lib['name']}.flags"
-        if extra_flags.exists():
-            e["flags"] = list(e.get("flags", [])) + [f"windows-extra-{extra_flags.name}"]
-        libs.append(e)
-    for name, x in deps["extra"].items():
-        if name in built:
-            libs.append({k: v for k, v in x.items() if k != "source"} | {"name": name, "source": _expand(x["source"], x["version"])})
-    versions["libraries"] = libs
-    (out / "versions.json").write_text(json.dumps(versions, indent=2), encoding="utf-8")
-
-
 def main() -> int:
     cmd = sys.argv[1]
     if cmd == "get":
-        e = resolve(sys.argv[2])
-        field = sys.argv[3]
-        print(f"{e['name']}-{e['version']}" if field == "dir" else e.get(field) or "")
+        print(resolve(sys.argv[2]).get(sys.argv[3]) or "")
     elif cmd == "fetch":
         print(fetch(sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])).as_posix())
-    elif cmd == "pkgroot":
-        pkgroot(ROOT, Path(sys.argv[2]), sys.argv[3].split(","))
     elif cmd == "tofu":
         e = resolve(sys.argv[2])
         e["sha256"] = None
-        p = _download(e, Path(sys.argv[3]))
-        print(f"{e['name']} {e['version']} {_sha256(p)} {e['url']}")
+        print(f"{e['name']} {e['version']} {_sha256(_download(e, Path(sys.argv[3])))} {e['url']}")
     else:
         print(__doc__, file=sys.stderr)
         return 2

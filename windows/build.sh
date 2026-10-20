@@ -37,7 +37,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
 mkdir -p "$1"; OUT=$(cd "$1" && pwd)
 WORK=${MEDIAHRO_WORK:-$ROOT/build/windows}; mkdir -p "$WORK"; WORK=$(cd "$WORK" && pwd)
-CACHE=$WORK/cache SRC=$WORK/src
+CACHE=$WORK/cache SRC=$WORK/sources DL=$WORK/downloads
 JOBS=${MEDIAHRO_JOBS:-$(nproc)}
 TARGETS=${MEDIAHRO_TARGETS:-x64 arm64}
 mkdir -p "$WORK/tmp"; TMP=$(cygpath -m "$WORK/tmp"); TEMP=$TMP; export TMP TEMP
@@ -55,11 +55,9 @@ HOST_PY=$(find_python)
 setup_tools
 ( T=$WORK/host; mkdir -p "$T"; load_msvc_env x64; build_host_pkgconf )
 
-# Download and verify every source the recipes use before building anything,
-# so a network or hash problem stops the build in its first minutes.
-for src in $(grep -oE '\$\(fetch [A-Za-z0-9._-]+\)' "$HERE/lib/recipes.sh" | sed 's/^$(fetch //; s/)$//' | sort -u); do
-  fetch "$src" > /dev/null
-done
+# Download and verify (SHA-256, OpenPGP) every Windows source before building
+# anything, so a network or hash problem stops the build in its first minutes.
+sources || die "source fetch failed"
 log "all sources verified"
 
 want() {  # want RECIPE: honour MEDIAHRO_ONLY
@@ -69,18 +67,25 @@ want() {  # want RECIPE: honour MEDIAHRO_ONLY
 }
 
 run_recipe() {
-  local r=$1 stamp key logf start
+  local r=$1 stamp key logf start libs n f
   stamp=$T/stamps/$r; logf=$T/logs/$r.log
-  mkdir -p "$T/stamps" "$T/logs"
-  key=$( { declare -f "r_$r"; cat "$HERE/deps.json" "$ROOT/versions.json" "$T/meson.ini"; ls "$HERE/patches/$r" 2>/dev/null || true; cat "$HERE/flags/$r.flags" 2>/dev/null || true; } | sha256sum | cut -c1-16)
+  mkdir -p "$T/stamps" "$T/logs" "$T/build-info"
+  libs=$(declare -f "r_$r" | grep -oE 'fetch [A-Za-z0-9._-]+' | awk '{print $2}' | sort -u)
+  # Key: recipe, pins, toolchain files, and the flags and patches of its own
+  # libraries (flags/<name>.*flags; libvips → vips.flags).
+  key=$( { declare -f "r_$r"; cat "$HERE/deps.json" "$ROOT/versions.json" "$T/meson.ini"
+           for n in $libs; do cat "$ROOT/flags/$n".*flags "$ROOT/flags/${n#lib}".*flags "$HERE/flags/$n.flags" \
+                                  "$HERE/patches/$n"/*.patch "$ROOT/patches/$n"/*.patch 2>/dev/null || true; done; } | sha256sum | cut -c1-16)
   case ",${MEDIAHRO_REBUILD:-}," in *",$r,"*) rm -f "$stamp" ;; esac
   if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$key" ]; then
-    cat "$T/stamps/$r.built" >> "$T/built.txt" 2>/dev/null || true
     log "$TARGET $r: up to date"; return 0
   fi
+  # Forget the build-info this recipe wrote last time; it writes it afresh.
+  for f in $(cat "$stamp.infos" 2>/dev/null); do rm -f "$T/build-info/$f"; done
+  rm -f "$stamp.infos"
   start=$SECONDS
   log "$TARGET $r"
-  : > "$T/built.new"
+  touch "$T/.step-start"; sleep 1
   # Not inside `if`/`&&`: bash ignores errexit in a tested subshell.
   local rc
   set +e
@@ -91,6 +96,7 @@ run_recipe() {
     echo "---- last 150 lines of $logf ----" >&2; tail -n 150 "$logf" >&2
     die "$TARGET $r failed"
   fi
+  find "$T/build-info" -name '*.json' -newer "$T/.step-start" -printf '%f\n' > "$stamp.infos"
   printf '%s\n' "$key" > "$stamp"
   log "$TARGET $r: ok ($((SECONDS - start)) s)"
 }
@@ -99,15 +105,17 @@ for ARCH in $TARGETS; do
   TARGET=windows-$ARCH
   T=$WORK/$TARGET PREFIX=$WORK/$TARGET/prefix
   mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/include"
-  : > "$T/built.txt"
   load_msvc_env "$ARCH"
   write_toolchains "$ARCH"
   for r in $RECIPES; do
     want "$r" || continue
-    built() { local n; for n in "$@"; do echo "$n" >> "$T/built.txt"; echo "$n" >> "$T/stamps/$r.built.tmp"; done; }
-    rm -f "$T/stamps/$r.built.tmp"
     run_recipe "$r"
-    [ -f "$T/stamps/$r.built.tmp" ] && mv -f "$T/stamps/$r.built.tmp" "$T/stamps/$r.built"
+  done
+  # Only the build-info of the current recipes (none left from removed ones).
+  keep=" $(for r in $RECIPES; do cat "$T/stamps/$r.infos" 2>/dev/null; done | tr '\n' ' ') "
+  for f in "$T"/build-info/*.json; do
+    [ -f "$f" ] || continue
+    case $keep in *" $(basename "$f") "*) ;; *) rm -f "$f" ;; esac
   done
   [ -n "${MEDIAHRO_ONLY:-}" ] && continue
   stage_target

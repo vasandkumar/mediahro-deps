@@ -1,7 +1,7 @@
 # FFmpeg configure flags for windows-x64 and windows-arm64 (lane B4c; docs/05 §4.1, §4.3).
 # Added to ffmpeg.common.flags. Hardware decode through D3D11VA, D3D12VA, DXVA2
-# and Vulkan; Media Foundation (mfplat.dll loaded at runtime) and D3D12 encoders
-# for cast transcoding; TLS from Schannel only.
+# and Vulkan (--enable-hwaccels in the common flags). No TLS in FFmpeg: network
+# streams come through the app's AVIO over OS TLS (ADR-017).
 --target-os=win64
 --toolchain=msvc
 --enable-w32threads
@@ -9,7 +9,15 @@
 --enable-d3d12va
 --enable-dxva2
 --enable-mediafoundation
---enable-schannel
 --enable-zlib
 --enable-bzlib
 --enable-lzma
+# SUB-013: subtitle charset conversion (win-iconv over Windows code pages).
+--enable-iconv
+# CAST-005 hardware encode: Media Foundation (mfplat.dll is loaded at run time)
+# and D3D12 Video; frame upload/scaling on the GPU.
+--enable-encoder=h264_mf,hevc_mf,aac_mf,h264_d3d12va,hevc_d3d12va,av1_d3d12va
+--enable-filter=scale_d3d11,scale_d3d12
+# The D3D11/D3D12 scale filters reference IID_ID3D1x* GUIDs, which MSVC
+# toolchains take from dxguid.lib (configure only adds it for MinGW).
+--extra-libs=-ldxguid

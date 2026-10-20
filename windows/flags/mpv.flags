@@ -1,7 +1,8 @@
 # Windows additions to ../flags/mpv.flags (lane B4c; docs/05 §4.1, §4.3).
 # D3D11 / Vulkan rendering, D3D11VA / DXVA2 hwdec, WASAPI audio, libass with
-# fontconfig + DirectWrite. Explicitly off: GPL rubberband, scripting/plugins,
-# OpenGL paths, SMTC (the app's media session owns it), device inputs.
+# fontconfig + DirectWrite (rubberband, scripting and plugins are off in the shared file).
+# Explicitly off here:
+# OpenGL paths, SMTC (the app's media session owns it), other platforms' outputs.
 -Dwin32-threads=enabled
 -Dd3d11=enabled
 -Dd3d-hwaccel=enabled
@@ -15,10 +16,6 @@
 -Dzlib=enabled
 -Diconv=enabled
 -Djpeg=enabled
--Drubberband=disabled
--Dvapoursynth=disabled
--Dcplugins=disabled
--Dlibavdevice=disabled
 -Dgl=disabled
 -Degl-angle=disabled
 -Ddirect3d=disabled
@@ -31,11 +28,8 @@
 -Djack=disabled
 -Dcaca=disabled
 -Dsixel=disabled
--Ddvbin=disabled
 -Dcuda-hwaccel=disabled
 -Dcuda-interop=disabled
 -Dvaapi=disabled
 -Duwp=disabled
--Dtests=false
--Dfuzzers=false
 -Dbuild-date=false

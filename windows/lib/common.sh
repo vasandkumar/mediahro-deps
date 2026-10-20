@@ -11,11 +11,11 @@ ensure_msys_packages() {
   local need=()
   # MSYS2's own tools only: the inherited Windows PATH may hold Git's or
   # Strawberry Perl's builds, which use a different runtime.
-  for t in make perl zstd patch diff; do [ -x "/usr/bin/$t.exe" ] || [ -x "/usr/bin/$t" ] || need+=("$t"); done
+  for t in make perl zstd patch diff gpg cygpath; do [ -x "/usr/bin/$t.exe" ] || [ -x "/usr/bin/$t" ] || need+=("$t"); done
   [ ${#need[@]} -eq 0 ] && return 0
   command -v pacman >/dev/null || die "missing ${need[*]} and no pacman"
-  log "pacman: installing make diffutils perl patch zstd"
-  pacman -S --noconfirm --needed make diffutils perl patch zstd >&2
+  log "pacman: installing make diffutils perl patch zstd gnupg"
+  pacman -S --noconfirm --needed make diffutils perl patch zstd gnupg >&2
 }
 
 # Resolve the real CPython before PATH is rebuilt (skip the WindowsApps stub).
@@ -35,6 +35,8 @@ setup_tools() {
   local TOOLS=$WORK/tools
   mkdir -p "$TOOLS/bin" "$CACHE" "$SRC"
   HOST_PY=$(find_python)
+  # git for package.py's mediahro_deps.commit (outside the rebuilt build PATH).
+  GIT_BIN=$(dirname "$(command -v git)")
   if [ ! -x "$WORK/venv/Scripts/python.exe" ]; then
     log "python venv ($HOST_PY)"
     "$HOST_PY" -m venv "$(w "$WORK/venv")"
@@ -46,8 +48,8 @@ setup_tools() {
   fi
   PY=$WORK/venv/Scripts/python.exe
 
-  LLVM=$(fetch llvm)
-  NASM=$(fetch nasm)
+  LLVM=$(tool llvm)
+  NASM=$(tool nasm)
   cp -f "$NASM/nasm.exe" "$TOOLS/bin/"
   [ -x "$LLVM/bin/clang-cl.exe" ] || die "clang-cl missing from $LLVM"
 
@@ -91,7 +93,7 @@ load_msvc_env() {
     case $p in *"Visual Studio"*|*"Windows Kits"*|*"Microsoft SDKs"*|*MSBuild*) newpath="$newpath:$(cygpath -u "$p")" ;; esac
   done
   unset IFS
-  export PATH="$newpath:$(dirname "$HOST_PY"):/usr/bin:/c/Windows/System32:/c/Windows:/c/Windows/System32/WindowsPowerShell/v1.0"
+  export PATH="$newpath:$(dirname "$HOST_PY"):/usr/bin:$GIT_BIN:/c/Windows/System32:/c/Windows:/c/Windows/System32/WindowsPowerShell/v1.0"
   hash -r
   MSVC_BIN=$(dirname "$(command -v link.exe)")
   case $(command -v link.exe) in */usr/bin/*) die "GNU link shadows MSVC link" ;; esac
@@ -252,28 +254,99 @@ EOF
 
 # ---------------------------------------------------------------- sources
 
-# fetch NAME -> path of the verified, extracted (and patched) source tree
+# sources [sources.py fetch args...]: the shared fetcher (scripts/sources.py,
+# lane B4a) checks each download's SHA-256 and OpenPGP signature before it
+# extracts to $SRC/<name> and applies patches/<name>/.
+sources() {
+  "$HOST_PY" -I "$(w "$HERE/lib/sources_win.py")" "$(cygpath -w /usr/bin)" fetch \
+    --dest "$(w "$SRC")" --cache "$(w "$DL")" --platform windows "$@" >&2
+}
+
+# fetch NAME -> $SRC/NAME, with windows/patches/NAME/ applied on top. A tree
+# patched with an older set of Windows patches is re-extracted first.
 fetch() {
-  local name=$1 dir
-  dir=$("$HOST_PY" -I "$(w "$HERE/lib/pins.py")" fetch "$name" "$(w "$CACHE")" "$(w "$SRC")" | tr -d '\r') || die "fetch $name failed"
-  dir=$(cygpath -u "$dir")
-  if [ -d "$HERE/patches/$name" ] && [ ! -e "$dir/.mediahro-patched" ]; then
-    local p
-    for p in "$HERE/patches/$name"/*.patch; do
-      log "patch $name: $(basename "$p")"
-      patch -d "$dir" -p1 --forward --batch < "$p" >&2 || die "patch $p failed"
-    done
-    touch "$dir/.mediahro-patched"
+  local name=$1 dir=$SRC/$1 want p
+  [ -f "$dir/.mediahro-sha256" ] || sources --only "$name" || die "fetch $name failed"
+  if [ -d "$HERE/patches/$name" ]; then
+    want=$(cat "$HERE/patches/$name"/*.patch | sha256sum | cut -c1-16)
+    if [ "$(cat "$dir/.mediahro-windows-patches" 2>/dev/null)" != "$want" ]; then
+      if [ -f "$dir/.mediahro-windows-patches" ]; then
+        rm -f "$dir/.mediahro-sha256"; sources --only "$name" || die "fetch $name failed"
+      fi
+      for p in "$HERE/patches/$name"/*.patch; do
+        log "patch $name: windows/patches/$name/$(basename "$p")"
+        patch -d "$dir" -p1 --forward --batch < "$p" >&2 || die "patch $p failed"
+      done
+      echo "$want" > "$dir/.mediahro-windows-patches"
+    fi
   fi
   echo "$dir"
 }
 
+# tool NAME -> verified, extracted build tool from windows/deps.json
+tool() {
+  local dir
+  dir=$("$HOST_PY" -I "$(w "$HERE/lib/pins.py")" fetch "$1" "$(w "$CACHE")" "$(w "$WORK/tools")" | tr -d '\r') || die "tool $1 failed"
+  cygpath -u "$dir"
+}
+
 pin() { "$HOST_PY" -I "$(w "$HERE/lib/pins.py")" get "$1" "$2" | tr -d '\r'; }
+version_of() { "$HOST_PY" -I -c "import json,sys; print(next(l['version'] for l in json.load(open(sys.argv[1]))['libraries'] if l['name']==sys.argv[2]))" "$(w "$ROOT/versions.json")" "$1" | tr -d '\r'; }
+
+# ----------------------------------------------------------- build info
+
+# Every recipe leaves build-info/<name>.json for scripts/package.py: the real
+# configure arguments, the files it produced, and the source scan (no
+# GPL-only file may be compiled; lib/scan.py).
+CONF_ARGS=()
+
+# built NAME [--into ARTEFACT | --header | --files "A.dll B.lib"] [--src DIR]
+built() {
+  local name=$1 mode=files into="" src="$SRC/$1" files="" f; shift
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --into) mode=into; into=$2; shift 2 ;;
+      --header) mode=header; shift ;;
+      --files) files=$2; shift 2 ;;
+      --src) src=$2; shift 2 ;;
+      *) die "built: unknown option $1" ;;
+    esac
+  done
+  mkdir -p "$T/build-info" "$T/scan"
+  if [ "$mode" = files ] && [ -z "$files" ]; then
+    files=$( { find "$PREFIX/bin" -maxdepth 1 -name '*.dll' -newer "$T/.step-start" -printf '%f\n'
+               find "$PREFIX/lib" -maxdepth 1 -name '*.lib' -newer "$T/.step-start" -printf '%f\n'; } | sort)
+  fi
+  if [ "$mode" = header ]; then
+    printf '{"files_scanned": 0, "gpl_only_sources": [], "gpl_with_exception_sources": []}' > "$T/scan/$name.json"
+  else
+    "$HOST_PY" -I "$(w "$HERE/lib/scan.py")" "$name" "$(w "$src")" "$(w "$B")" "$(w "$T/scan/$name.json")" \
+      $(for f in $files ${into%% *}; do case $f in *.dll) echo "$f" ;; esac; done) || die "$name: GPL-only source compiled (see scan)"
+  fi
+  "$HOST_PY" -I - "$(w "$T/build-info/$name.json")" "$name" "$mode" "$into" "$files" "$(w "$T/scan/$name.json")" \
+      "$(w "$WORK")" "$(w "$LLVM")" "${CONF_ARGS[@]}" <<'PY'
+import json, sys
+out, name, mode, into, files, scan, work, llvm, *args = sys.argv[1:]
+s = json.load(open(scan))
+# Configure lines go into the About screen: no machine-specific paths.
+args = [a.replace(work, "$WORK").replace(llvm, "$LLVM") for a in args]
+info = {"name": name, "configure": args if mode != "into" else [f"built as part of {into}"] + args,
+        "files": [f for f in files.split() if f] if mode == "files" else [],
+        "files_scanned": s["files_scanned"], "gpl_only_sources": s["gpl_only_sources"],
+        "gpl_with_exception_sources": s["gpl_with_exception_sources"]}
+if mode == "into":
+    info["compiled_into"] = into
+elif mode == "header":
+    info["compiled_into"] = "consumers (headers / build-time only)"
+json.dump(info, open(out, "w"), indent=2)
+PY
+}
 
 # --------------------------------------------------------------- builders
 
 cmake_build() {  # SRC BUILD [cmake args...]
   local s=$1 b=$2; shift 2
+  CONF_ARGS=("$@")
   rm -rf "$b"
   cmake -S "$(w "$s")" -B "$(w "$b")" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$(w "$T/toolchain.cmake")" \
@@ -290,6 +363,7 @@ cmake_build() {  # SRC BUILD [cmake args...]
 # flags through a second machine file; -Dc_link_args would replace them.
 meson_build() {  # SRC BUILD [meson args...]
   local s=$1 b=$2 machine=("$MESON_MACHINE") f extra=""; shift 2
+  CONF_ARGS=("$@")
   [ -n "${MESON_BUILD_MACHINE:-}" ] && machine+=("$MESON_BUILD_MACHINE")
   rm -rf "$b"
   if [ -n "${MESON_EXTRA_LDFLAGS:-}${MESON_EXTRA_CFLAGS:-}" ]; then
@@ -351,7 +425,7 @@ build_host_pkgconf() {
   local v src b=$T/pkgconf
   v=$(pin pkgconf version)
   [ "$(cat "$WORK/tools/pkgconf.version" 2>/dev/null)" = "$v" ] && return 0
-  src=$(fetch pkgconf)
+  src=$(tool pkgconf)
   log "host pkgconf $v"
   rm -rf "$b"
   CC=cl meson setup "$(w "$b")" "$(w "$src")" --buildtype=release -Ddefault_library=static -Dtests=disabled >"$T/pkgconf.log" 2>&1 &&
