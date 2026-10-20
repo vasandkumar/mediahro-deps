@@ -11,11 +11,11 @@ STAGE_SKIP_DLLS="vulkan-1.dll SPIRV-Tools-shared.dll"
 # What Mediahro opens itself (ADR-020: nothing else ships unless one of these
 # imports it): the FFI libraries (mediahro_ffi native_library.dart), libmpv and
 # the FFmpeg libraries the engine remuxes with (B1), libssh2 (B2's bindings),
-# and the ggml CPU variants ggml.dll loads at run time. lib/ship.py adds what
+# and ggml's CPU backend (on x64 the variants ggml.dll picks at run time). lib/ship.py adds what
 # they import or delay-load.
 SHIP_ROOTS="mpv-*.dll vips-*.dll jxl.dll jxl_threads.dll avif.dll raw.dll smb2.dll libnfs.dll libcurl.dll
 archive.dll ebur128.dll chromaprint.dll openmpt.dll whisper.dll uchardet.dll libssh2.dll
-avformat-*.dll avcodec-*.dll avutil-*.dll ggml-cpu-*.dll"
+avformat-*.dll avcodec-*.dll avutil-*.dll ggml-cpu*.dll"
 
 stage_target() {
   local st=$T/stage f base name
