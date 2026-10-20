@@ -5,9 +5,11 @@ Archive layout:  lib/  include/  licenses/<name>.txt  build-info/<name>.json  ma
 
   {"target": "...", "mediahro_deps": {"commit", "release"},
    "artefacts": [{"name", "version", "license", "linking", "configure": [...],
-                  "source": {"url", "sha256"}, "files": [...], "compiled_into",
+                  "source": {"url", "sha256"}, "files": [...], "not_shipped": [...], "compiled_into",
                   "files_scanned", "gpl_only_sources": [...], "gpl_with_exception_sources": [...]}],
    "not_built": [{"name", "reason"}]}
+"not_shipped" lists files a library's build produced that nothing links or loads (ADR-020),
+so they are left out of the archive.
 
 When the staging tree has build-info/ (written by the platform build for each
 library it actually built), the manifest lists exactly those libraries with
@@ -126,7 +128,8 @@ def main() -> int:
         if built is not None:
             b = built[lib["name"]]
             entry["configure"] = b.get("configure", [])
-            for key in ("files", "compiled_into", "files_scanned", "gpl_only_sources", "gpl_with_exception_sources"):
+            for key in ("files", "not_shipped", "compiled_into", "files_scanned", "gpl_only_sources",
+                        "gpl_with_exception_sources"):
                 if key in b:
                     entry[key] = b[key]
             if lib["linking"] == "dynamic" and not any(f.endswith((".so", ".dll", ".dylib")) or ".framework" in f
