@@ -2,18 +2,32 @@
 # Turns each slice's installed dylibs into dynamic .framework bundles, merges
 # slices with lipo and assembles one .xcframework per library.
 #
-# Naming contract (for lane B1's podspec and dart:ffi): every dylib
-# lib/<stem>[.N...].dylib becomes <stem>.framework/<stem>, e.g.
-# libmpv.framework/libmpv, libavcodec.framework/libavcodec,
-# libMoltenVK.framework/libMoltenVK. Install names are
-# @rpath/<stem>.framework/<stem> (iOS) and
-# @rpath/<stem>.framework/Versions/A/<stem> (macOS).
+# Naming contract (packages/mediahro_ffi nativeLibraryFileName and lane B1's
+# engine loader): every dylib lib<name>[.N...].dylib becomes
+# <name>.framework/<name>, e.g. mpv.framework/mpv, vips.framework/vips,
+# avcodec.framework/avcodec, MoltenVK.framework/MoltenVK. Install names are
+# @rpath/<name>.framework/<name> (iOS) and
+# @rpath/<name>.framework/Versions/A/<name> (macOS).
+#
+# Only what the app links or loads ships (ADR-020): the dependency closure of
+# APP_ROOTS = mpv (and the FFmpeg libraries B1 opens for CAST-005 remux) plus
+# every NativeLibrary in packages/mediahro_ffi/lib/src/native/native_library.dart.
+APP_ROOTS="mpv avformat avcodec avutil avfilter swscale swresample vips jxl avif raw smb2 nfs curl archive
+ebur128 chromaprint openmpt whisper uchardet"
 
 # dylib_stem libfoo.1.2.3.dylib -> libfoo ; libglib-2.0.0.dylib -> libglib-2
 dylib_stem() {
   local b=${1##*/}
   b=${b%.dylib}
   while [[ $b =~ ^(.+)\.[0-9]+$ ]]; do b=${BASH_REMATCH[1]}; done
+  printf '%s\n' "$b"
+}
+
+# fw_name PATH -> framework name: libfoo.1.2.dylib -> foo ; libglib-2.0.0.dylib -> glib-2
+fw_name() {
+  local b
+  b=$(dylib_stem "$1")
+  [ "${b#lib}" != "" ] && b=${b#lib}
   printf '%s\n' "$b"
 }
 
@@ -76,7 +90,7 @@ make_slice_frameworks() {
   log "frameworks for $SLICE"
   for f in "$PREFIX"/lib/*.dylib; do
     [ -L "$f" ] && continue
-    stem=$(dylib_stem "$f")
+    stem=$(fw_name "$f")
     [ -z "${stems[$stem]:-}" ] || die "two dylibs map to framework $stem: ${stems[$stem]} and $f"
     stems[$stem]=$f
   done
@@ -106,7 +120,7 @@ make_slice_frameworks() {
       case $dep in
         /usr/lib/* | /System/Library/*) continue ;;
       esac
-      dstem=$(dylib_stem "$dep")
+      dstem=$(fw_name "$dep")
       [ -n "${stems[$dstem]:-}" ] || die "$stem ($SLICE) links $dep, which is not one of our frameworks"
       install_name_tool -change "$dep" "@rpath/$dstem.framework/$(fw_binary_rel "$OS" "$dstem")" "$bin" 2>/dev/null
     done < <(otool -L "$f" | tail -n +2 | awk '{print $1}')
@@ -118,9 +132,52 @@ make_slice_frameworks() {
     else
       install_name_tool -add_rpath "@loader_path/.." "$bin" 2>/dev/null
     fi
-    "$STRIP_BIN" -x "$bin"
   done
+  : >"$SLICE_DIR/sizes.txt"
+  : >"$SLICE_DIR/not_shipped.txt"
+  # MEDIAHRO_APPLE_ONLY development builds lack the app libraries: keep everything.
+  [ -n "${ONLY:-}" ] || ship_closure "$out"
+  # Sizes of what ships (ADR-020 table): before and after stripping local symbols.
+  local before=0 after=0 n
+  for fw in "$out"/*.framework; do
+    stem=$(basename "$fw" .framework)
+    bin="$fw/$(fw_binary_rel "$OS" "$stem")"
+    n=$(stat -f %z "$bin"); before=$((before + n))
+    "$STRIP_BIN" -x "$bin"
+    n=$(stat -f %z "$bin"); after=$((after + n))
+    printf '%s %s\n' "$stem" "$n" >>"$SLICE_DIR/sizes.txt"
+  done
+  printf '%s unstripped=%s stripped=%s\n' "$SLICE" "$before" "$after" >"$SLICE_DIR/size-total.txt"
   check_slice_frameworks "$out"
+}
+
+# ship_closure DIR : keep the dependency closure of APP_ROOTS, drop the rest
+# (recorded in not_shipped.txt and in each library's build-info).
+ship_closure() {
+  local out=$1 queue=() name dep fw
+  local -A keep=()
+  for name in $APP_ROOTS; do
+    [ -d "$out/$name.framework" ] || die "app library $name.framework was not built ($SLICE)"
+    keep[$name]=1
+    queue+=("$name")
+  done
+  while [ "${#queue[@]}" -gt 0 ]; do
+    name=${queue[0]}
+    queue=("${queue[@]:1}")
+    while read -r dep; do
+      [[ $dep == @rpath/*.framework/* ]] || continue
+      dep=${dep#@rpath/}
+      dep=${dep%%.framework/*}
+      if [ -z "${keep[$dep]:-}" ]; then keep[$dep]=1; queue+=("$dep"); fi
+    done < <(otool -L "$out/$name.framework/$(fw_binary_rel "$OS" "$name")" | tail -n +2 | awk '{print $1}')
+  done
+  for fw in "$out"/*.framework; do
+    name=$(basename "$fw" .framework)
+    if [ -z "${keep[$name]:-}" ]; then
+      echo "$name.framework" >>"$SLICE_DIR/not_shipped.txt"
+      rm -rf "$fw"
+    fi
+  done
 }
 
 # Every load command must point at the OS or at one of our frameworks.

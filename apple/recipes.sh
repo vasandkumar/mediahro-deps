@@ -2,14 +2,21 @@
 # One build_<name> function per library, run once per slice in RECIPES order.
 # Every library is built shared so it can become its own .framework.
 
-RECIPES="libffi pcre2 glib expat brotli highway libogg opus flac libvpx dav1d vvdec
+RECIPES="libffi pcre2 glib expat brotli highway opus libvpx dav1d
 freetype fribidi harfbuzz libass lcms2 libjpeg-turbo libspng libwebp libdeflate zstd xz libtiff
-imath openexr cgif libexif libjxl libavif libraw uchardet libebur128 libudfread libbluray
+imath openexr libexif libjxl libavif libraw uchardet libebur128 libudfread libbluray
 libopenmpt libsmb2 libnfs curl libarchive chromaprint whisper.cpp libvips vulkan-headers
-moltenvk shaderc libplacebo ffmpeg mpv"
+moltenvk glslang libplacebo ffmpeg mpv"
 
 # Pinned libraries built inside another recipe (their own build-info says where).
-COMPILED_IN="proxy-libintl glslang spirv-tools spirv-headers spirv-cross cereal fast_float glad"
+COMPILED_IN="proxy-libintl spirv-cross cereal fast_float glad"
+
+# ADR-020, as on Android: libplacebo compiles GLSL with a static glslang, so
+# shaderc / SPIRV-Tools / SPIRV-Headers are not needed; FFmpeg decodes FLAC
+# itself and libvips has no GIF saver, so libogg / libFLAC / cgif have no user.
+# versions.json still lists them for Apple until lane B4a drops "apple" there;
+# until then package.py reports them under not_built.
+APPLE_NOT_BUILT="shaderc spirv-tools spirv-headers libogg flac cgif"
 
 # new_dylibs GLOB : dylibs installed by the current recipe whose name matches GLOB
 new_dylibs() {
@@ -28,8 +35,8 @@ scan_into() {
   local name=$1 sdir=$2 bdir=$3 libs
   libs=$(new_dylibs "$4")
   [ -n "${libs// /}" ] || die "scan_into $name: no dylib matches $4"
-  (STEP_ARGS=("compiled into $(dylib_stem "${libs%% *}")"); SCAN_LIBS="$libs" \
-    finish "$name" "$bdir" "$sdir" "$(dylib_stem "${libs%% *}").framework")
+  (STEP_ARGS=("compiled into $(fw_name "${libs%% *}")"); SCAN_LIBS="$libs" \
+    finish "$name" "$bdir" "$sdir" "$(fw_name "${libs%% *}").framework")
 }
 
 # --- glib (libvips dependency) ------------------------------------------------
@@ -102,24 +109,11 @@ build_highway() {
 
 # --- audio / video codecs -----------------------------------------------------
 
-build_libogg() {
-  local s; s=$(src libogg)
-  cmake_build libogg "$s" -DINSTALL_DOCS=OFF
-  license libogg "$s/COPYING"
-}
-
 build_opus() {
   local s; s=$(src opus)
   cmake_build opus "$s" -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_BUILD_TESTING=OFF -DOPUS_BUILD_SHARED_LIBRARY=ON \
     -DOPUS_FORTIFY_SOURCE=ON -DOPUS_STACK_PROTECTOR=ON
   license opus "$s/COPYING"
-}
-
-build_flac() {
-  local s; s=$(src flac)
-  cmake_build flac "$s" -DBUILD_PROGRAMS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF -DINSTALL_MANPAGES=OFF \
-    -DBUILD_CXXLIBS=OFF -DWITH_OGG=ON -DWITH_STACK_PROTECTOR=ON -DWITH_FORTIFY_SOURCE=ON
-  license flac "$s/COPYING.Xiph"
 }
 
 build_libvpx() {
@@ -156,16 +150,6 @@ build_dav1d() {
   local s; s=$(src dav1d)
   meson_build dav1d "$s" -Denable_tools=false -Denable_examples=false -Denable_tests=false -Denable_docs=false
   license dav1d "$s/COPYING"
-}
-
-build_vvdec() {
-  local s x86=ON arm=OFF; s=$(src vvdec)
-  # vvdec's x86 kernels also build on arm64 through its bundled SIMDe; its
-  # native NEON kernels exist only for arm64.
-  if [ "$ARCH" = arm64 ]; then arm=ON; fi
-  cmake_build vvdec "$s" -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF \
-    -DVVDEC_ENABLE_X86_SIMD="$x86" -DVVDEC_ENABLE_ARM_SIMD="$arm" -DVVDEC_ENABLE_WERROR=OFF
-  license vvdec "$s/LICENSE.txt"
 }
 
 # --- subtitles / text ---------------------------------------------------------
@@ -276,12 +260,6 @@ build_openexr() {
     -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_ZSTD=OFF \
     -DOPENEXR_FORCE_INTERNAL_OPENJPH=ON -DOPENEXR_BUILD_OSS_FUZZ=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=ON
   license openexr "$s/LICENSE.md"
-}
-
-build_cgif() {
-  local s; s=$(src cgif)
-  meson_build cgif "$s" -Dexamples=false -Dtests=false
-  license cgif "$s/LICENSE"
 }
 
 build_libexif() {
@@ -425,7 +403,8 @@ build_libvips() {
   local s; s=$(src libvips)
   read_flags "$ROOT/flags/vips.flags"; local common=("${FLAGS[@]}")
   read_flags "$APPLE/flags/vips.apple.flags"
-  meson_build libvips "$s" "${common[@]}" "${FLAGS[@]}"
+  merge_flags "${common[@]}" -- "${FLAGS[@]}"
+  meson_build libvips "$s" "${MERGED[@]}"
   license libvips "$s/LICENSE"
 }
 
@@ -478,35 +457,16 @@ EOF
   license moltenvk "$s/LICENSE"
 }
 
-build_shaderc() {
-  local s g t h; s=$(src shaderc)
-  g=$(src glslang); t=$(src spirv-tools); h=$(src spirv-headers)
-  # Commits must match shaderc's DEPS so the sources are the ones shaderc tested.
-  grep -q "'glslang_revision': '$(pin_commit glslang)'" "$s/DEPS" || die "glslang pin differs from shaderc DEPS"
-  grep -q "'spirv_tools_revision': '$(pin_commit spirv-tools)'" "$s/DEPS" || die "spirv-tools pin differs from shaderc DEPS"
-  grep -q "'spirv_headers_revision': '$(pin_commit spirv-headers)'" "$s/DEPS" || die "spirv-headers pin differs from shaderc DEPS"
-  rm -rf "$s/third_party/glslang" "$s/third_party/spirv-tools" "$s/third_party/spirv-headers"
-  mv "$g" "$s/third_party/glslang"
-  mv "$t" "$s/third_party/spirv-tools"
-  mv "$h" "$s/third_party/spirv-headers"
-  cmake_build shaderc "$s" -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_EXECUTABLES=ON \
-    -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_WERROR_COMPILE=OFF -DSPIRV_WERROR=OFF \
-    -DSPIRV_SKIP_TESTS=ON -DSPIRV_SKIP_EXECUTABLES=ON -DENABLE_GLSLANG_BINARIES=OFF -DGLSLANG_TESTS=OFF \
-    -DENABLE_HLSL=ON -DSKIP_GLSLANG_INSTALL=ON -DSKIP_SPIRV_TOOLS_INSTALL=ON -DSPIRV_HEADERS_SKIP_INSTALL=ON \
-    -DBUILD_SHARED_LIBS=OFF -DSHADERC_ENABLE_SHARED_CRT=OFF
-  # shaderc_shared is the self-contained dylib (glslang + SPIRV-Tools inside);
-  # drop the static archives and point shaderc.pc at it.
-  rm -f "$PREFIX"/lib/libshaderc.a "$PREFIX"/lib/libshaderc_combined.a "$PREFIX"/lib/libshaderc_util.a
-  printf 'prefix=%s\nlibdir=${prefix}/lib\nincludedir=${prefix}/include\n\nName: shaderc\nDescription: shaderc (shared)\nVersion: %s\nLibs: -L${libdir} -lshaderc_shared\nCflags: -I${includedir}\n' \
-    "$PREFIX" "$(pin_version shaderc)" >"$PREFIX/lib/pkgconfig/shaderc.pc"
-  license shaderc "$s/LICENSE"
-  license glslang "$s/third_party/glslang/LICENSE.txt"
-  license spirv-tools "$s/third_party/spirv-tools/LICENSE"
-  license spirv-headers "$s/third_party/spirv-headers/LICENSE"
-  local x
-  for x in glslang spirv-tools spirv-headers; do
-    scan_into "$x" "$s/third_party/$x" "$BUILD/shaderc" 'libshaderc_shared*.dylib'
-  done
+# SPIR-V compiler for libplacebo's Vulkan backend: glslang as a static library
+# without its SPIRV-Tools optimiser and HLSL front end (ADR-020, as on Android).
+# It is compiled into libplacebo; no glslang framework ships.
+build_glslang() {
+  local s; s=$(src glslang)
+  cmake_build glslang "$s" -DBUILD_SHARED_LIBS=OFF -DENABLE_OPT=OFF -DENABLE_HLSL=OFF \
+    -DENABLE_GLSLANG_BINARIES=OFF -DGLSLANG_TESTS=OFF -DENABLE_CTEST=OFF -DGLSLANG_ENABLE_INSTALL=ON \
+    -DBUILD_EXTERNAL=OFF -DENABLE_SPVREMAPPER=OFF
+  license glslang "$s/LICENSE.txt"
+  (SCAN_LIBS="" finish glslang "$BUILD/glslang" "$s" placebo.framework)
 }
 
 build_libplacebo() {
@@ -521,7 +481,12 @@ build_libplacebo() {
   cp -R "$(vk_headers_dir)" "$s/3rdparty/Vulkan-Headers"
   read_flags "$ROOT/flags/libplacebo.flags"; local common=("${FLAGS[@]}")
   read_flags "$APPLE/flags/libplacebo.apple.flags"
-  meson_build libplacebo "$s" "${common[@]}" "${FLAGS[@]}"
+  merge_flags "${common[@]}" -- "${FLAGS[@]}"
+  # glslang 16 keeps everything in libglslang.a, which libplacebo's probe does
+  # not add itself; the command-line link args replace the cross file's.
+  local la="$HARDEN_LDFLAGS -L$PREFIX/lib -lglslang -lglslang-default-resource-limits -lc++"
+  meson_build libplacebo "$s" "${MERGED[@]}" -Dvulkan-sdk="$PREFIX" -Dprefer_static=true \
+    "-Dc_link_args=$la" "-Dcpp_link_args=$la"
   license libplacebo "$s/LICENSE"
   license fast_float "$s/3rdparty/fast_float/LICENSE-MIT" "$s/3rdparty/fast_float/LICENSE-APACHE" "$s/3rdparty/fast_float/LICENSE-BOOST"
   license glad "$s/3rdparty/glad/LICENSE"
@@ -547,7 +512,7 @@ build_ffmpeg() {
     common+=("$f")
   done
   read_flags "$ROOT/flags/ffmpeg.apple.flags"; local apple=("${FLAGS[@]}")
-  record_args --target-os=darwin "${common[@]}" "${apple[@]}"
+  record_args --target-os=darwin --optflags="$OPT_LEVEL" "${common[@]}" "${apple[@]}"
   case $ARCH in arm64) arch=aarch64 ;; x86_64) arch=x86_64 ;; esac
   b="$BUILD/ffmpeg"
   rm -rf "$b"; mkdir -p "$b"
@@ -556,14 +521,22 @@ build_ffmpeg() {
     --cc="$CC_BIN" --cxx="$CXX_BIN" --objcc="$CC_BIN" --ar="$AR_BIN" --ranlib="$RANLIB_BIN" \
     --strip="$STRIP_BIN" --nm="$(xcrun --sdk "$SDK" -f nm)" --x86asmexe="$NASM" \
     --sysroot="$SYSROOT" --pkg-config="$PKGCONF" \
-    --extra-cflags="-target $TRIPLE -I$PREFIX/include" \
-    --extra-objcflags="-target $TRIPLE" \
+    --optflags="$OPT_LEVEL" \
+    --extra-cflags="-target $TRIPLE -I$PREFIX/include $HARDEN_CFLAGS" \
+    --extra-objcflags="-target $TRIPLE $HARDEN_CFLAGS" \
     --extra-ldflags="-target $TRIPLE -L$PREFIX/lib $HARDEN_LDFLAGS" \
     --install-name-dir="$PREFIX/lib" \
     "${common[@]}" "${apple[@]}")
+  # --disable-everything makes every component explicit: a misspelt name must
+  # not drop a format silently (same guard as android/build.sh).
+  if grep -E "did not match anything|Unknown option" "$LOGS/$SLICE-ffmpeg.log" >&2; then
+    die "FFmpeg configure: fix the component names above (flags/ffmpeg.*.flags)"
+  fi
   # --disable-autodetect makes configure drop requested features silently; fail instead.
   local cfg="$b/ffbuild/config.mak"
-  for f in VIDEOTOOLBOX AUDIOTOOLBOX LIBDAV1D LIBVPX LIBOPUS LIBOPENMPT VULKAN ZLIB BZLIB ICONV LIBXML2; do
+  for f in VIDEOTOOLBOX AUDIOTOOLBOX LIBDAV1D LIBVPX LIBOPUS LIBOPENMPT LIBWEBP LIBJXL VULKAN ZLIB BZLIB ICONV LIBXML2 \
+    H264_VIDEOTOOLBOX_ENCODER HEVC_VIDEOTOOLBOX_ENCODER AAC_AT_ENCODER AAC_AT_DECODER H264_VIDEOTOOLBOX_HWACCEL \
+    HEVC_VIDEOTOOLBOX_HWACCEL PGSSUB_DECODER LIBOPENMPT_DEMUXER HLS_MUXER; do
     require_grep "$cfg" "^CONFIG_$f=yes" "FFmpeg configure dropped $f"
   done
   # TLS from the OS only: SecureTransport (Security.framework) on every slice.
@@ -582,12 +555,13 @@ build_mpv() {
   read_flags "$ROOT/flags/mpv.flags"; local common=("${FLAGS[@]}")
   read_flags "$APPLE/flags/mpv.apple.flags"; local apple=("${FLAGS[@]}")
   read_flags "$APPLE/flags/mpv.$OS.flags"; local os=("${FLAGS[@]}")
+  merge_flags "${common[@]}" -- "${apple[@]}" "${os[@]}"
   local extra=()
   [ "$OS" = macos ] && extra+=("-Dswift-flags=-target $TRIPLE")
   # mpv adds "-isysroot <SDK>" to every link from TOOLS/macos-sdk-version.py,
   # which defaults to the macOS SDK; point it at this slice's SDK.
   MACOS_SDK=$SYSROOT MACOS_SDK_VERSION=$(xcrun --sdk "$SDK" --show-sdk-version) \
-    meson_build mpv "$s" "${common[@]}" "${apple[@]}" "${os[@]}" "${extra[@]}"
+    meson_build mpv "$s" "${MERGED[@]}" "${extra[@]}"
   local cfg="$BUILD/mpv/config.h"
   require_grep "$cfg" "#define HAVE_GPL 0" "mpv must be the LGPL build"
   for f in VULKAN VIDEOTOOLBOX_PL; do

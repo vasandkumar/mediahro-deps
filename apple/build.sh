@@ -10,6 +10,9 @@
 #   MEDIAHRO_APPLE_SLICES  subset of: ios-arm64 iossim-arm64 iossim-x86_64 macos-arm64 macos-x86_64
 #   MEDIAHRO_APPLE_ONLY    subset of recipes (see apple/recipes.sh); skips packaging
 #   MEDIAHRO_APPLE_WORK    work directory (default: build/apple)
+#   MEDIAHRO_APPLE_MEASURE ADR-020 size table: clean ios-arm64 builds with each
+#                          optimisation switched off in turn (writes
+#                          <out-dir>/apple-size-table.md; no packaging)
 
 # macOS ships bash 3.2; the framework step needs bash >= 4.
 if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
@@ -46,7 +49,7 @@ mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd)
 SLICES=${MEDIAHRO_APPLE_SLICES:-$ALL_SLICES}
 ONLY=${MEDIAHRO_APPLE_ONLY:-}
-CACHE="$WORK/cache"
+CACHE=${MEDIAHRO_APPLE_CACHE:-$WORK/cache}
 LOGS="$WORK/logs"
 LICENSES="$WORK/licenses"
 SOURCES="$WORK/sources"
@@ -56,6 +59,33 @@ mkdir -p "$CACHE" "$LOGS" "$LICENSES"
 STAMP="$WORK/.stamp"
 touch "$STAMP"
 : >"$WORK/notes.txt"
+
+# --- ADR-020 measurement: one clean ios-arm64 build per switched-off optimisation
+if [ -n "${MEDIAHRO_APPLE_MEASURE:-}" ] && [ -z "${MEDIAHRO_APPLE_VARIANT:-}" ]; then
+  table="$OUT/apple-size-table.md"
+  {
+    echo "| Variant (ios-arm64, shipped frameworks) | Stripped total | Unstripped total |"
+    echo "|---|---:|---:|"
+  } >"$table"
+  for v in all no-lto no-gc all-o2; do
+    log "measure: variant $v"
+    env_args=(MEDIAHRO_APPLE_VARIANT="$v" MEDIAHRO_APPLE_SLICES=ios-arm64 MEDIAHRO_APPLE_WORK="$WORK/measure-$v"
+      MEDIAHRO_APPLE_CACHE="$CACHE")
+    case $v in
+      no-lto) env_args+=(MEDIAHRO_NO_LTO=1) ;;
+      no-gc) env_args+=(MEDIAHRO_NO_GC=1) ;;
+      all-o2) env_args+=(MEDIAHRO_ALL_O2=1) ;;
+    esac
+    env "${env_args[@]}" "$0" "$OUT/measure-$v"
+    read -r _ un st < "$WORK/measure-$v/ios-arm64/size-total.txt"
+    printf '| %s | %.2f MB | %.2f MB |\n' "$v" "$(echo "${st#stripped=} / 1048576" | bc -l)" \
+      "$(echo "${un#unstripped=} / 1048576" | bc -l)" >>"$table"
+    cp "$WORK/measure-$v/ios-arm64/sizes.txt" "$OUT/apple-sizes-$v.txt"
+    rm -rf "$WORK/measure-$v" "$OUT/measure-$v"
+  done
+  cat "$table" >&2
+  exit 0
+fi
 
 # --- tools --------------------------------------------------------------------
 log "tools"
@@ -85,7 +115,8 @@ export PATH="$WORK/venv/bin:$PATH"
 # --- sources: pinned, hash- and signature-checked by scripts/sources.py ----------
 python3 "$ROOT/scripts/verify_flags.py"
 # zlib, bzip2, libxml2 and libiconv come from the Apple SDK (versions.json limits them to other platforms).
-python3 "$ROOT/scripts/sources.py" fetch --platform apple --dest "$SOURCES" --cache "$CACHE/downloads" >&2
+# shellcheck disable=SC2086
+python3 "$ROOT/scripts/sources.py" fetch --platform apple --dest "$SOURCES" --cache "$CACHE/downloads"   --skip $APPLE_NOT_BUILT >&2
 VERSIONS_TSV="$WORK/versions.tsv"
 python3 - "$ROOT/versions.json" "$VERSIONS_TSV" <<'PY'
 import json, sys
@@ -100,7 +131,7 @@ PY
 # lists for Apple are skipped.
 APPLE_LIBS=$(awk -F'\t' '$4 == 1 { print $1 }' "$VERSIONS_TSV")
 for lib in $APPLE_LIBS; do
-  in_list "$lib" $RECIPES $COMPILED_IN || die "versions.json lists $lib for Apple but apple/recipes.sh has no recipe for it"
+  in_list "$lib" $RECIPES $COMPILED_IN $APPLE_NOT_BUILT || die "versions.json lists $lib for Apple but apple/recipes.sh has no recipe for it"
 done
 
 # --- build each slice ----------------------------------------------------------
@@ -122,7 +153,9 @@ for slice in $SLICES; do
     BEFORE_DYLIBS=$(ls "$PREFIX"/lib/*.dylib 2>/dev/null || true)
     CLAIMED=""
     STEP_ARGS=()
-    log "$r ($SLICE)"
+    set_opt_flags "$r"
+    record_args "CFLAGS: $HARDEN_CFLAGS" "LDFLAGS: $HARDEN_LDFLAGS"
+    log "$r ($SLICE, $OPT_LEVEL)"
     t0=$SECONDS
     "build_$r"
     echo "$SLICE $r $((SECONDS - t0))s" >>"$TIMES"
@@ -132,9 +165,9 @@ for slice in $SLICES; do
     NEW_DYLIBS=""
     for f in $(new_dylibs '*.dylib'); do
       check_dylib "$PREFIX/lib/$f"
-      stem=$(dylib_stem "$f")
+      stem=$(fw_name "$f")
       # glib's gettext stub is its own pinned library (LGPL, dynamic).
-      if [ "$stem" = libintl ]; then STEM_LIB[$stem]=proxy-libintl; else STEM_LIB[$stem]=$r; fi
+      if [ "$stem" = intl ]; then STEM_LIB[$stem]=proxy-libintl; else STEM_LIB[$stem]=$r; fi
       STEM_VERSIONS+="$stem $(plist_version "$(pin_version "${STEM_LIB[$stem]}")")"$'\n'
       in_list "$f" $CLAIMED || NEW_DYLIBS+="$f "
     done
@@ -157,6 +190,10 @@ if [ -n "$ONLY" ]; then
   log "MEDIAHRO_APPLE_ONLY set: built $ONLY for $SLICES; not packaging"
   exit 0
 fi
+if [ -n "${MEDIAHRO_APPLE_VARIANT:-}" ]; then
+  log "measurement variant ${MEDIAHRO_APPLE_VARIANT}: $(cat "$WORK"/*/size-total.txt)"
+  exit 0
+fi
 
 # --- assemble xcframeworks and package ----------------------------------------
 has_slices() { local s; for s in "$@"; do in_list "$s" $SLICES || return 1; done; }
@@ -168,7 +205,7 @@ stage_target() { # TARGET HEADER_SLICE "SLICES" GROUP...
   log "assemble $target"
   rm -rf "$st"
   mkdir -p "$st/include" "$st/licenses" "$st/build-info"
-  make_xcframeworks "$st/lib" "$@"
+  make_xcframeworks "$st/Frameworks" "$@"
   cp -R "$WORK/$hslice/prefix/include/." "$st/include/"
   # glib keeps its arch-specific glibconfig.h under lib/; ship it next to glib.h.
   if [ -f "$WORK/$hslice/prefix/lib/glib-2.0/include/glibconfig.h" ]; then
@@ -178,9 +215,10 @@ stage_target() { # TARGET HEADER_SLICE "SLICES" GROUP...
   # header slice, source-scan results merged over every slice.
   local dirs=()
   for s in $slices; do dirs+=("$WORK/$s/build-info"); done
-  python3 - "$st/build-info" "$WORK/$hslice/build-info" "${dirs[@]}" <<'PY'
+  python3 - "$st/build-info" "$WORK/$hslice/not_shipped.txt" "$WORK/$hslice/build-info" "${dirs[@]}" <<'PY'
 import json, pathlib, sys
-out, first, *dirs = (pathlib.Path(a) for a in sys.argv[1:])
+out, dropped_file, first, *dirs = (pathlib.Path(a) for a in sys.argv[1:])
+dropped = set(dropped_file.read_text().split())
 names = sorted(p.stem for p in first.glob("*.json"))
 bad = []
 for name in names:
@@ -188,7 +226,12 @@ for name in names:
     if len(infos) != len(dirs):
         sys.exit(f"stage: {name} has no build-info for every slice")
     merged = dict(json.loads((first / f"{name}.json").read_text()))
-    merged["files"] = sorted({f for i in infos for f in i.get("files", [])})
+    files = sorted({f for i in infos for f in i.get("files", [])})
+    merged["files"] = [f for f in files if f not in dropped]
+    gone = [f for f in files if f in dropped]
+    if gone:
+        # Built (a dependency's build produces it) but nothing the app links or loads needs it (ADR-020).
+        merged["not_shipped"] = gone
     merged["files_scanned"] = max(i.get("files_scanned", 0) for i in infos)
     for key in ("gpl_only_sources", "gpl_with_exception_sources"):
         merged[key] = sorted({f for i in infos for f in i.get(key, [])})
@@ -207,7 +250,7 @@ PY
     echo "  \"comment\": \"framework stem -> versions.json library\","
     local first=1
     for stem in $(printf '%s\n' "${!STEM_LIB[@]}" | sort); do
-      [ -d "$st/lib/$stem.xcframework" ] || continue
+      [ -d "$st/Frameworks/$stem.xcframework" ] || continue
       [ $first = 1 ] || echo ","
       printf '  "%s": "%s"' "$stem" "${STEM_LIB[$stem]}"
       first=0
@@ -216,6 +259,17 @@ PY
     echo "}"
   } >"$st/frameworks.json"
   python3 "$ROOT/scripts/package.py" "$target" "$st" "$OUT"
+}
+
+# total_size DIR : bytes of every framework binary under DIR (one slice or a lipo'd group)
+total_size() {
+  local fw stem bin t=0
+  for fw in "$1"/*.framework; do
+    stem=$(basename "$fw" .framework)
+    if [ -d "$fw/Versions" ]; then bin="$fw/Versions/A/$stem"; else bin="$fw/$stem"; fi
+    t=$((t + $(stat -f %z "$bin")))
+  done
+  echo "$t"
 }
 
 packaged=0
@@ -232,6 +286,20 @@ if has_slices macos-arm64 macos-x86_64; then
   packaged=$((packaged + 1))
 fi
 [ "$packaged" -gt 0 ] || die "no complete target among slices: $SLICES"
+
+SIZES="$OUT/apple-sizes.md"
+{
+  echo "| Shipped frameworks | Total |"
+  echo "|---|---:|"
+  if has_slices ios-arm64; then
+    printf '| iOS arm64 (what App Store thinning installs) | %.2f MB |\n' "$(echo "$(total_size "$WORK/ios-arm64/frameworks") / 1048576" | bc -l)"
+  fi
+  if has_slices macos-arm64 macos-x86_64; then
+    printf '| macOS universal (arm64 + x86_64) | %.2f MB |\n' "$(echo "$(total_size "$WORK/merged/macos") / 1048576" | bc -l)"
+    printf '| macOS arm64 slice only | %.2f MB |\n' "$(echo "$(total_size "$WORK/macos-arm64/frameworks") / 1048576" | bc -l)"
+  fi
+} >"$SIZES"
+cat "$SIZES" >&2
 
 log "archives"
 for f in "$OUT"/*.sha256; do cat "$f"; done

@@ -6,9 +6,38 @@ IOS_MIN=16.0
 MACOS_MIN=12.0
 ALL_SLICES="ios-arm64 iossim-arm64 iossim-x86_64 macos-arm64 macos-x86_64"
 # Hardening (README "Rules"): fortify, stack protector, PIC/PIE. CFI is not
-# available for Apple dylibs (see apple/README.md).
+# available for Apple dylibs (see apple/README.md). set_opt_flags() adds the
+# ADR-020 size/speed set per library.
 HARDEN_CFLAGS="-O2 -fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong"
 HARDEN_LDFLAGS="-Wl,-headerpad_max_install_names"
+
+# ADR-020: -O2 on the decode / render / image hot paths, -Os for everything off
+# them (same split as android/build.sh SIZE_LIBS).
+SIZE_LIBS="brotli libdeflate expat libffi pcre2 glib uchardet libudfread libbluray libarchive libexif imath
+openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint xz zstd"
+# libvpx is installed as a static archive and wrapped into a dylib by hand.
+NO_LTO_LIBS="libvpx"
+OPT_LEVEL=-O2
+
+# set_opt_flags RECIPE : compile/link flags for one library. Measurement
+# switches (one clean build each, ADR-020 table): MEDIAHRO_NO_LTO,
+# MEDIAHRO_NO_GC, MEDIAHRO_ALL_O2.
+set_opt_flags() {
+  local r=$1 ld=""
+  OPT_LEVEL=-O2
+  if [ -z "${MEDIAHRO_ALL_O2:-}" ] && in_list "$r" $SIZE_LIBS; then OPT_LEVEL=-Os; fi
+  HARDEN_CFLAGS="$OPT_LEVEL -fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong"
+  if [ -z "${MEDIAHRO_NO_GC:-}" ]; then
+    HARDEN_CFLAGS+=" -ffunction-sections -fdata-sections"
+    ld+=" -Wl,-dead_strip"
+  fi
+  if [ -z "${MEDIAHRO_NO_LTO:-}" ] && ! in_list "$r" $NO_LTO_LIBS; then
+    HARDEN_CFLAGS+=" -flto=thin"
+    ld+=" -flto=thin"
+  fi
+  HARDEN_LDFLAGS="-Wl,-headerpad_max_install_names$ld"
+  write_meson_cross
+}
 
 # in_list WORD LIST... : true when WORD is one of LIST (no pipe, so pipefail-safe)
 in_list() { local w=$1 x; shift; for x in "$@"; do [ "$x" = "$w" ] && return 0; done; return 1; }
@@ -52,7 +81,7 @@ record_args() { STEP_ARGS+=("$@"); }
 finish() {
   local name=$1 bdir=$2 sdir=$3 into=${4:-} libs=${SCAN_LIBS-${NEW_DYLIBS:-}} files=() f
   if [ -z "$into" ]; then
-    for f in $libs; do files+=("$(dylib_stem "$f").framework"); done
+    for f in $libs; do files+=("$(fw_name "$f").framework"); done
   fi
   mkdir -p "$SLICE_DIR/scan" "$SLICE_DIR/build-info"
   # shellcheck disable=SC2086
@@ -162,13 +191,19 @@ write_shims() {
     "$SYSROOT" >"$SHIM/pkgconfig/libxml-2.0.pc"
 }
 
+meson_list() { # ARGS... -> 'a', 'b', ...
+  local a out=""
+  for a in "$@"; do out+="${out:+, }'$a'"; done
+  printf '%s' "$out"
+}
+
 write_meson_cross() {
   local c cxx flags largs exe_wrapper=true
   [ "$NATIVE" = 1 ] && exe_wrapper=false
   c="['$CC_BIN', '-target', '$TRIPLE', '-isysroot', '$SYSROOT']"
   cxx="['$CXX_BIN', '-target', '$TRIPLE', '-isysroot', '$SYSROOT']"
-  flags="['-O2', '-fPIC', '-D_FORTIFY_SOURCE=2', '-fstack-protector-strong']"
-  largs="['-Wl,-headerpad_max_install_names', '-L$PREFIX/lib']"
+  flags="[$(meson_list $HARDEN_CFLAGS)]"
+  largs="[$(meson_list $HARDEN_LDFLAGS "-L$PREFIX/lib")]"
   cat >"$SLICE_DIR/cross.ini" <<EOF
 [binaries]
 c = $c
@@ -221,6 +256,23 @@ read_flags() {
     case $line in '' | '#'*) continue ;; esac
     FLAGS+=("$line")
   done <"$f"
+}
+
+# merge_flags SHARED... -- PLATFORM... : MERGED = both lists, a platform
+# "-Dkey=value" replacing the shared one with the same key (meson rejects a
+# key given twice); flags without "=" are kept once each.
+merge_flags() {
+  local f k seen_sep=0
+  local -A val=()
+  local order=()
+  for f in "$@"; do
+    if [ "$f" = -- ]; then seen_sep=1; continue; fi
+    k=${f%%=*}
+    if [ -z "${val[$k]+x}" ]; then order+=("$k"); fi
+    if [ "$seen_sep" = 1 ] || [ -z "${val[$k]+x}" ]; then val[$k]=$f; fi
+  done
+  MERGED=()
+  for k in "${order[@]}"; do MERGED+=("${val[$k]}"); done
 }
 
 # --- build-system wrappers --------------------------------------------------
