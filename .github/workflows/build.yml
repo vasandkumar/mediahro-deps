@@ -129,7 +129,13 @@ jobs:
         run: |
           rev="$(python3 -c 'import json;print(json.load(open("versions.json"))["toolchains"]["android-ndk"]["revision"])')"
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          [ -d "$sdk/ndk/$rev" ] || yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$rev" > /dev/null
+          # sdkmanager occasionally gets a truncated archive ("Error on ZipFile unknown archive"): retry.
+          for attempt in 1 2 3; do
+            [ -f "$sdk/ndk/$rev/source.properties" ] && break
+            rm -rf "$sdk/ndk/$rev"
+            (yes || true) | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$rev" > /dev/null || true
+          done
+          [ -f "$sdk/ndk/$rev/source.properties" ] || { echo "::error::NDK $rev could not be installed"; exit 1; }
           echo "ANDROID_NDK_HOME=$sdk/ndk/$rev" >> "$GITHUB_ENV"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
