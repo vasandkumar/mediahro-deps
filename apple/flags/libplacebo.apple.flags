@@ -1,0 +1,17 @@
+# libplacebo extras for Apple (override ../../flags/libplacebo.flags by key).
+# SPIR-V via a static glslang compiled in (ADR-020, as on Android; no shaderc).
+# Vulkan through MoltenVK, linked directly (vk-proc-addr). OpenGL / GLES for
+# the libmpv render API; mpv hands libplacebo its GL loader (no gl-proc-addr).
+-Dglslang=enabled
+-Dshaderc=disabled
+-Dvk-proc-addr=enabled
+-Dopengl=enabled
+-Dgl-proc-addr=disabled
+-Dd3d11=disabled
+-Ddovi=enabled
+-Dlibdovi=disabled
+-Dunwind=disabled
+-Dxxhash=disabled
+-Dbench=false
+-Dfuzz=false
+-Ddebug-abort=false

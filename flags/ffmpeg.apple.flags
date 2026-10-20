@@ -1,3 +1,19 @@
+# FFmpeg configure flags for iOS and macOS (on top of ffmpeg.common.flags).
+# --target-os, --arch, compilers and sysroot are set per slice by apple/build.sh.
+# OS decoders first (docs/09 §4): VideoToolbox / AudioToolbox.
 --enable-videotoolbox
 --enable-audiotoolbox
+# TLS from the OS only (docs/05 §4.1, docs/07 rule 12): SecureTransport on iOS and macOS.
 --enable-securetransport
+# SDK libraries (--disable-autodetect in the common flags turns them off).
+--enable-zlib
+--enable-bzlib
+--enable-iconv
+--enable-libxml2
+# iconv lives in libiconv on Apple, not in libSystem.
+--extra-libs=-liconv
+# Components for the explicit list in ffmpeg.common.flags (--disable-everything):
+# OS decoders and encoders first (docs/09 §4, CAST-005 hardware H.264/HEVC + AAC).
+# The VideoToolbox hwaccels come from --enable-hwaccels in the common file.
+--enable-decoder=aac_at,alac_at,mp3_at,ac3_at,eac3_at
+--enable-encoder=h264_videotoolbox,hevc_videotoolbox,aac_at
