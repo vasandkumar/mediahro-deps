@@ -1,0 +1,55 @@
+Gapless AAC in MP4/M4A: discard the iTunSMPB end padding, bounded so it is never cut twice.
+
+FFmpeg 8.1.3 reads only the iTunSMPB priming; the end padding ("remainder") stays
+in the output, so a 2 s / 88200-sample track decodes to 89088 samples. This
+backports FFmpeg master's end trim (libavformat/mov.c mov_read_custom +
+libavformat/demux.c, where a shortened last packet still spans a whole frame)
+together with lane B1's correction for files whose stts/mdhd already end at
+priming + samples (FFmpeg 6.x AAC output, tagged afterwards): there master trims
+the padding twice and returns 87312 samples. first_discard_sample =
+min(max(duration - remainder, priming + samples), duration).
+
+Tested on 8.1.3 (host build) with 2 s 44.1 kHz AAC files carrying
+iTunSMPB " 00000000 00000400 00000378 0000000000015888 ...":
+  stts ends at priming + samples (89224):  unpatched 89088, patched 88200
+  iTunes layout, full last frame (90112):   unpatched 89088, patched 88200
+  no iTunSMPB tag:                          unchanged
+
+--- a/libavformat/demux.c
++++ b/libavformat/demux.c
+@@ -1536,7 +1536,9 @@
+         if (sti->first_discard_sample && pkt->pts != AV_NOPTS_VALUE) {
+             int64_t pts = pkt->pts - (is_relative(pkt->pts) ? RELATIVE_TS_BASE : 0);
+             int64_t sample = ts_to_samples(st, pts);
+-            int64_t duration = ts_to_samples(st, pkt->duration);
++            /* The decoder returns a whole frame even when the container shortens the
++             * last packet's duration (FFmpeg master). */
++            int64_t duration = FFMAX(st->codecpar->frame_size, ts_to_samples(st, pkt->duration));
+             int64_t end_sample = sample + duration;
+             if (duration > 0 && end_sample >= sti->first_discard_sample &&
+                 sample < sti->last_discard_sample)
+--- a/libavformat/mov.c
++++ b/libavformat/mov.c
+@@ -5477,6 +5477,22 @@
+             if(sscanf(val, "%*X %X %X %X", &priming, &remainder, &samples) == 3){
+                 if(priming>0 && priming<16384)
+                     sc->start_pad = priming;
++                /* Discard the iTunSMPB end padding (as FFmpeg master does). The
++                 * padding is counted back from the media duration, which only
++                 * holds while the duration still includes it (as iTunes writes
++                 * it). When stts/mdhd already end at priming + samples, discard
++                 * from there instead of cutting real samples. */
++                if (remainder > 0 && st->duration > 0 && st->codecpar->sample_rate > 0) {
++                    int64_t duration = av_rescale_q(st->duration, st->time_base,
++                                                    (AVRational){ 1, st->codecpar->sample_rate });
++                    if (duration > remainder && duration > samples) {
++                        int64_t end = duration - remainder;
++                        if (priming > 0 && priming < 16384 && samples > 0)
++                            end = FFMIN(FFMAX(end, (int64_t)priming + samples), duration);
++                        ffstream(st)->first_discard_sample = end;
++                        ffstream(st)->last_discard_sample  = duration;
++                    }
++                }
+             }
+         }
+         if (strcmp(key, "cdec") != 0) {

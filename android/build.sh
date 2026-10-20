@@ -87,10 +87,11 @@ setup_abi() {
   export OBJDUMP="$TOOLCHAIN/bin/llvm-objdump"
   local probe=""
   "$CC" -fstack-clash-protection -Werror -x c -c /dev/null -o /dev/null 2>/dev/null && probe="-fstack-clash-protection"
-  HARDEN="-O2 -fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong $probe $ARCH_FLAGS"
+  # The optimisation level comes per library from opt_level (install size, docs/11 §5).
+  HARDEN="-fPIC -D_FORTIFY_SOURCE=2 -fstack-protector-strong $probe $ARCH_FLAGS -ffunction-sections -fdata-sections"
   # FFmpeg 8 and libplacebo need newer Vulkan headers than the NDK sysroot has.
   VKINC="-I$SRC/vulkan-headers/include"
-  LDHARDEN="-Wl,-z,max-page-size=16384 -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,--build-id=sha1"
+  LDHARDEN="-Wl,-z,max-page-size=16384 -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,--build-id=sha1 -Wl,--gc-sections"
   export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
   unset PKG_CONFIG_PATH PKG_CONFIG_SYSROOT_DIR
   CROSS="$WORK/$ABI/meson-cross.ini"
@@ -132,6 +133,11 @@ EOF
 }
 
 # --- build helpers ----------------------------------------------------------------------
+
+# Install size (docs/11 §5): libraries off the playback / decode hot path are built with -Os.
+SIZE_LIBS="bzip2 brotli libdeflate expat libffi pcre2 glib freetype fribidi harfbuzz fontconfig libass uchardet shaderc
+  libudfread libbluray libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint"
+opt_level() { [[ " $(echo $SIZE_LIBS) " == *" $1 "* ]] && echo s || echo 2; }
 
 STEP=""; STEP_ARGS=()
 should_build() {  # skip when the stamp matches (source hash + recipe args), unless ONLY names it
@@ -194,7 +200,8 @@ PY
 
 meson_build() {  # meson_build <name> [meson options...]
   local name="$1"; shift
-  local opts=(--prefix "$PREFIX" --libdir lib --buildtype release --wrap-mode nodownload
+  local opts=(--prefix "$PREFIX" --libdir lib -Doptimization="$(opt_level "$name")" -Ddebug=false -Db_ndebug=true
+              --wrap-mode nodownload
               -Db_staticpic=true --cross-file "$CROSS" "$@")
   [[ " $* " == *" -Ddefault_library="* ]] || opts+=(-Ddefault_library=shared)
   should_build "$name" "${opts[@]}" || return 0
@@ -210,6 +217,7 @@ cmake_build() {  # cmake_build <name> [cmake options...]   (CMAKE_SUBDIR selects
   local opts=(-G Ninja -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" -DANDROID_STL=c++_shared
               -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_C_FLAGS_RELEASE="-O$(opt_level "$name") -DNDEBUG" -DCMAKE_CXX_FLAGS_RELEASE="-O$(opt_level "$name") -DNDEBUG"
               -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH="$PREFIX"
               -DCMAKE_FIND_ROOT_PATH="$PREFIX" -DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON
               -DCMAKE_C_FLAGS="$HARDEN" -DCMAKE_CXX_FLAGS="$HARDEN"
@@ -235,13 +243,19 @@ autotools_build() {  # autotools_build <name> [configure options...]  (in a copy
   local opts=(--host="$HOST" --prefix="$PREFIX" --libdir="$PREFIX/lib" --enable-shared --disable-static --with-pic "$@")
   should_build "$name" "${opts[@]}" || return 0
   local b="$BUILD/$name"; rm -rf "$b"; cp -a "$SRC/$name" "$b"
-  (cd "$b" && CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" CPPFLAGS="-I$PREFIX/include" \
+  # -MD: every compile leaves a depfile for source_scan.py, also in hand-written Makefiles (libiconv).
+  (cd "$b" && CFLAGS="-O$(opt_level "$name") $HARDEN -MD" CXXFLAGS="-O$(opt_level "$name") $HARDEN -MD" CPPFLAGS="-I$PREFIX/include" \
      LDFLAGS="$LDHARDEN -L$PREFIX/lib" LIBS="$("$CC" -print-libgcc-file-name)" ./configure "${opts[@]}")
   # libtool links C++ libraries with -nostdlib: the compiler-rt builtins (LIBS above) keep
   # outline atomics and other helpers inside the library instead of leaving them undefined.
   unversion_libtool "$b"
-  make -C "$b" -j "$JOBS"
-  make -C "$b" install
+  # AUTOTOOLS_SUBDIRS limits the build to library directories (libiconv: not its GPL `iconv` program).
+  local d
+  for d in ${AUTOTOOLS_SUBDIRS:-.}; do
+    make -C "$b/$d" -j "$JOBS"
+    make -C "$b/$d" install
+  done
+  [ -z "${AUTOTOOLS_POST:-}" ] || (cd "$b" && eval "$AUTOTOOLS_POST")
   finish "$name" "$b"
 }
 
@@ -251,7 +265,6 @@ recipes() {
   local vk="$SRC/vulkan-headers"
 
   header_only vulkan-headers "include=$vk/include"
-  header_only spirv-headers
   header_only fast_float
   header_only glad "generator for libplacebo's OpenGL loader"
 
@@ -260,7 +273,7 @@ recipes() {
     local b="$BUILD/bzip2"; rm -rf "$b"; mkdir -p "$b"
     local s
     for s in blocksort huffman crctable randtable compress decompress bzlib; do
-      "$CC" $HARDEN -D_FILE_OFFSET_BITS=64 -MD -MF "$b/$s.d" -c "$SRC/bzip2/$s.c" -o "$b/$s.o"
+      "$CC" -Os $HARDEN -D_FILE_OFFSET_BITS=64 -MD -MF "$b/$s.d" -c "$SRC/bzip2/$s.c" -o "$b/$s.o"
     done
     "$CC" -shared $LDHARDEN -Wl,-soname,libbz2.so -o "$PREFIX/lib/libbz2.so" "$b"/*.o
     install -m644 "$SRC/bzip2/bzlib.h" "$PREFIX/include/"
@@ -302,41 +315,28 @@ recipes() {
   cmake_build uchardet -DBUILD_BINARY=OFF -DBUILD_STATIC=OFF
 
   # Codecs
-  cmake_build libjpeg-turbo -DENABLE_STATIC=OFF -DENABLE_SHARED=ON -DWITH_TURBOJPEG=ON -DWITH_JAVA=OFF -DWITH_TOOLS=OFF -DWITH_TESTS=OFF
+  cmake_build libjpeg-turbo -DENABLE_STATIC=OFF -DENABLE_SHARED=ON -DWITH_TURBOJPEG=OFF -DWITH_JAVA=OFF -DWITH_TOOLS=OFF -DWITH_TESTS=OFF
   meson_build dav1d -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false -Denable_asm=true
   # libvpx assembles with nasm on x86_64 and with the NDK clang on ARM (not the host's GNU as).
   local vpx_as=() vpx_asm="$CC -c"; [ "$ABI" = x86_64 ] && { vpx_as=(--as=nasm); vpx_asm=nasm; }
   if should_build libvpx --target="$VPX_TARGET" --enable-pic --disable-shared --enable-static --disable-examples \
        --disable-tools --disable-docs --disable-unit-tests --enable-vp9-highbitdepth --disable-runtime-cpu-detect "${vpx_as[@]}"; then
     local b="$BUILD/libvpx"; rm -rf "$b"; mkdir -p "$b"
-    (cd "$b" && CROSS="" CFLAGS="$HARDEN" CXXFLAGS="$HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="$vpx_asm" \
+    (cd "$b" && CROSS="" CFLAGS="-O2 $HARDEN" CXXFLAGS="-O2 $HARDEN" LDFLAGS="$LDHARDEN" LD="$CC" AS="$vpx_asm" \
        "$SRC/libvpx/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" "${STEP_ARGS[@]}")
     make -C "$b" -j "$JOBS"
     make -C "$b" install
     finish libvpx "$b"
   fi
-  cmake_build libogg -DBUILD_TESTING=OFF -DINSTALL_DOCS=OFF
   cmake_build opus -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_BUILD_TESTING=OFF -DOPUS_INSTALL_PKG_CONFIG_MODULE=ON -DOPUS_INSTALL_CMAKE_CONFIG_MODULE=ON
-  cmake_build flac -DBUILD_PROGRAMS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_DOCS=OFF -DINSTALL_MANPAGES=OFF \
-    -DBUILD_CXXLIBS=OFF -DWITH_OGG=ON -DWITH_STACK_PROTECTOR=ON
   autotools_build libopenmpt --without-mpg123 --without-ogg --without-vorbis --without-vorbisfile --without-portaudio \
     --without-portaudiocpp --without-pulseaudio --without-sndfile --without-flac --disable-openmpt123 --disable-examples \
     --disable-tests --disable-doxygen-doc
-  CMAKE_SUBDIR="" cmake_build vvdec -DVVDEC_ENABLE_LINK_TIME_OPT=OFF -DVVDEC_INSTALL_VVDECAPP=OFF -DBUILD_TESTING=OFF \
-    -DVVDEC_ENABLE_WERROR=OFF
 
-  # Vulkan shader toolchain (shaderc with the glslang / SPIRV-Tools / SPIRV-Headers commits from its DEPS)
-  local tp="$SRC/shaderc/third_party"
-  ln -sfn "$SRC/glslang" "$tp/glslang"; ln -sfn "$SRC/spirv-tools" "$tp/spirv-tools"; ln -sfn "$SRC/spirv-headers" "$tp/spirv-headers"
-  cmake_build shaderc -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_EXECUTABLES=ON \
-    -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSHADERC_ENABLE_WERROR_COMPILE=OFF -DSPIRV_SKIP_TESTS=ON -DSPIRV_SKIP_EXECUTABLES=ON \
-    -DSPIRV_WERROR=OFF -DENABLE_GLSLANG_BINARIES=OFF -DENABLE_CTEST=OFF -DGLSLANG_TESTS=OFF -DBUILD_SHARED_LIBS=OFF \
-    -DSPIRV_TOOLS_BUILD_STATIC=ON -DENABLE_OPT=ON
-  # glslang and SPIRV-Tools are linked into libshaderc_shared.so; scan them with it.
-  if [ ! -f "$INFO/glslang.json" ] || [ "$INFO/shaderc.json" -nt "$INFO/glslang.json" ]; then
-    scan_into glslang "$BUILD/shaderc" libshaderc_shared.so
-    scan_into spirv-tools "$BUILD/shaderc" libshaderc_shared.so
-  fi
+  # SPIR-V compiler for libplacebo's Vulkan backend: glslang, static and without its SPIRV-Tools optimiser or HLSL
+  # front end (install size, docs/11 §5). It is linked into libplacebo.so; shaderc and SPIRV-Tools are not shipped.
+  cmake_build glslang -DBUILD_SHARED_LIBS=OFF -DENABLE_OPT=OFF -DENABLE_HLSL=OFF -DENABLE_GLSLANG_BINARIES=OFF \
+    -DGLSLANG_TESTS=OFF -DENABLE_CTEST=OFF -DGLSLANG_ENABLE_INSTALL=ON -DBUILD_EXTERNAL=OFF -DENABLE_SPVREMAPPER=OFF
   meson_build lcms2 -Djpeg=disabled -Dtiff=disabled -Dutils=false -Dfastfloat=false -Dthreaded=false -Dtests=disabled -Dversionedlibs=false
 
   # libplacebo: provide its git submodules from pinned sources
@@ -344,33 +344,20 @@ recipes() {
   for sub in glad:glad fast_float:fast_float Vulkan-Headers:vulkan-headers; do
     rm -rf "${pl:?}/${sub%%:*}"; ln -sfn "$SRC/${sub##*:}" "$pl/${sub%%:*}"
   done
-  mapfile -t PL_FLAGS < <(flags libplacebo.flags; flags libplacebo.android.flags)
-  meson_build libplacebo "${PL_FLAGS[@]}" -Dvulkan-registry="$vk/registry/vk.xml"
-
-  # FFmpeg
-  mapfile -t FF_FLAGS < <(flags ffmpeg.common.flags; flags ffmpeg.android.flags)
-  local ff_x86=(); [ "$ABI" = x86_64 ] && ff_x86=(--x86asmexe=nasm)
-  [ "$ABI" = armeabi-v7a ] && ff_x86=(--enable-neon --enable-thumb)
-  if should_build ffmpeg "${FF_FLAGS[@]}" --arch="$FF_ARCH" --cpu="$FF_CPU" "${ff_x86[@]}"; then
-    local b="$BUILD/ffmpeg"; rm -rf "$b"; mkdir -p "$b"
-    (cd "$b" && "$SRC/ffmpeg/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" --shlibdir="$PREFIX/lib" \
-       --cc="$CC" --cxx="$CXX" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" --strip="$STRIP" \
-       --pkg-config="$(command -v pkg-config)" "${STEP_ARGS[@]}" \
-       --extra-cflags="$HARDEN -I$vk/include -I$PREFIX/include" --extra-cxxflags="$HARDEN" \
-       --extra-ldflags="$LDHARDEN -L$PREFIX/lib" ) || { tail -50 "$b/ffbuild/config.log"; exit 1; }
-    make -C "$b" -j "$JOBS"
-    make -C "$b" install
-    finish ffmpeg "$b"
-  fi
-
-  # Blu-ray (unencrypted BDMV only; no BD-J)
-  meson_build libudfread
-  meson_build libbluray -Dbdj_jar=disabled -Denable_tools=false -Denable_devtools=false -Denable_examples=false -Denable_docs=false \
-    -Dfreetype=enabled -Dfontconfig=enabled -Dlibxml2=disabled -Dembed_udfread=false
-
-  # mpv (libmpv only)
-  mapfile -t MPV_FLAGS < <(flags mpv.flags; flags mpv.android.flags)
-  meson_build mpv "${MPV_FLAGS[@]}"
+  # Platform flags override shared ones with the same -D key (meson rejects a key given twice).
+  mapfile -t PL_FLAGS < <(flags libplacebo.flags; flags libplacebo.android.flags | sed 's/^/@/')
+  PL_FLAGS=($(python3 -c 'import sys
+out = {}
+for a in sys.argv[1:]:
+    k = a.lstrip("@").split("=", 1)[0]
+    if a.startswith("@") or k not in out:
+        out[k] = a.lstrip("@")
+print(*out.values())' "${PL_FLAGS[@]}"))
+  # glslang is a static C++ library in the prefix. glslang 16 keeps all of it in libglslang.a (SPIRV and
+  # MachineIndependent are empty stubs), which libplacebo's probe does not add itself.
+  meson_build libplacebo "${PL_FLAGS[@]}" -Dvulkan-registry="$vk/registry/vk.xml" \
+    -Dc_args="$HARDEN $VKINC -I$PREFIX/include" -Dcpp_args="$HARDEN $VKINC -I$PREFIX/include" \
+    -Dc_link_args="$LDHARDEN -L$PREFIX/lib -lglslang -lglslang-default-resource-limits" -Dcpp_link_args="$LDHARDEN -L$PREFIX/lib -lglslang -lglslang-default-resource-limits" -Dprefer_static=true -Dvulkan-sdk="$PREFIX"
 
   # Archives (libvips dzsave/archive loader and the app's archive browser)
   cmake_build libarchive -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF -DENABLE_LIBB2=OFF -DENABLE_LZ4=OFF \
@@ -384,7 +371,7 @@ recipes() {
     -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF \
     -DWEBP_BUILD_LIBWEBPMUX=ON -DWEBP_ENABLE_SWAP_16BIT_CSP=OFF
   cmake_build libtiff -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF -Djpeg=ON -Dzlib=ON -Dlibdeflate=ON \
-    -Dlzma=ON -Dzstd=ON -Dwebp=ON -Djbig=OFF -Dlerc=OFF -Dcxx=OFF -Dold-jpeg=OFF
+    -Dlzma=ON -Dzstd=ON -Dwebp=ON -Djbig=OFF -Dlerc=OFF -Dtiff-cxx=OFF -Dold-jpeg=OFF
   cmake_build highway -DHWY_ENABLE_TESTS=OFF -DHWY_ENABLE_EXAMPLES=OFF -DHWY_ENABLE_CONTRIB=OFF -DHWY_ENABLE_INSTALL=ON -DBUILD_TESTING=OFF
   cmake_build libjxl -DJPEGXL_ENABLE_TOOLS=OFF -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF -DJPEGXL_ENABLE_BENCHMARK=OFF \
     -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JPEGLI=OFF -DJPEGXL_ENABLE_SJPEG=OFF -DJPEGXL_ENABLE_OPENEXR=OFF \
@@ -395,13 +382,52 @@ recipes() {
   cmake_build openexr -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_INSTALL_EXAMPLES=OFF -DOPENEXR_BUILD_EXAMPLES=OFF \
     -DBUILD_TESTING=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_BUILD_PYTHON=OFF \
     -DOPENEXR_INSTALL_PKG_CONFIG=ON -DOPENEXR_ENABLE_THREADING=ON
-  meson_build cgif -Dexamples=false -Dtests=false
   cmake_build libavif -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_BUILD_TESTS=OFF -DAVIF_JPEG=OFF \
     -DAVIF_ZLIBPNG=OFF -DAVIF_LIBSHARPYUV=OFF -DAVIF_LIBXML2=OFF -DAVIF_BUILD_EXAMPLES=OFF
   autotools_build libexif --disable-docs --disable-nls
   autotools_build libraw --disable-examples --disable-openmp --enable-lcms --enable-jpeg --disable-jasper --enable-zlib
   mapfile -t VIPS_FLAGS < <(flags vips.flags; flags vips.android.flags)
   meson_build libvips "${VIPS_FLAGS[@]}"
+
+  # SUB-013: bionic's iconv only converts UTF-8/16/32, ASCII and Latin-1. GNU libiconv (LGPL, shared) gives mpv and
+  # FFmpeg cp1251, Shift-JIS, GBK, Big5, EUC-KR and the rest. Only its library directories are built (not the GPL
+  # `iconv` program). It is built right before FFmpeg: libraries built earlier (glib, fontconfig, ...) must not see
+  # its iconv.h, which renames iconv() to libiconv() and needs a -liconv they do not pass.
+  AUTOTOOLS_SUBDIRS="libcharset lib" AUTOTOOLS_POST='install -m644 include/iconv.h.inst "$PREFIX/include/iconv.h"' \
+    autotools_build libiconv --disable-nls --enable-extra-encodings
+
+  # FFmpeg
+  mapfile -t FF_FLAGS < <(flags ffmpeg.common.flags; flags ffmpeg.android.flags)
+  local ff_x86=(); [ "$ABI" = x86_64 ] && ff_x86=(--x86asmexe=nasm)
+  [ "$ABI" = armeabi-v7a ] && ff_x86=(--enable-neon --enable-thumb)
+  # GNU libiconv (SUB-013): FFmpeg's configure check links without -liconv, which left libavcodec with
+  # undefined libiconv_* symbols and no DT_NEEDED; link it explicitly.
+  ff_x86+=(--extra-libs=-liconv)
+  if should_build ffmpeg "${FF_FLAGS[@]}" --arch="$FF_ARCH" --cpu="$FF_CPU" "${ff_x86[@]}"; then
+    local b="$BUILD/ffmpeg"; rm -rf "$b"; mkdir -p "$b"
+    (cd "$b" && "$SRC/ffmpeg/configure" --prefix="$PREFIX" --libdir="$PREFIX/lib" --shlibdir="$PREFIX/lib" \
+       --cc="$CC" --cxx="$CXX" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" --strip="$STRIP" \
+       --pkg-config="$(command -v pkg-config)" "${STEP_ARGS[@]}" \
+       --extra-cflags="$HARDEN -I$vk/include -I$PREFIX/include" --extra-cxxflags="$HARDEN" \
+       --extra-ldflags="$LDHARDEN -L$PREFIX/lib" --optflags=-O2 ) > "$b/configure.out" 2>&1 \
+       || { cat "$b/configure.out"; tail -50 "$b/ffbuild/config.log"; exit 1; }
+    # --disable-everything makes every component explicit: a misspelt name must not drop a format silently.
+    if grep -E "did not match anything|Unknown option" "$b/configure.out"; then echo "build: fix the FFmpeg flags above" >&2; exit 1; fi
+    make -C "$b" -j "$JOBS"
+    make -C "$b" install
+    finish ffmpeg "$b"
+  fi
+
+  # Blu-ray (unencrypted BDMV only; no BD-J)
+  meson_build libudfread
+  meson_build libbluray -Dbdj_jar=disabled -Denable_tools=false -Denable_devtools=false -Denable_examples=false -Denable_docs=false \
+    -Dfreetype=enabled -Dfontconfig=enabled -Dlibxml2=disabled -Dembed_udfread=false
+
+  # mpv (libmpv only)
+  mapfile -t MPV_FLAGS < <(flags mpv.flags; flags mpv.android.flags)
+  # meson's iconv dependency would take bionic's: point mpv at GNU libiconv (header + -liconv) for SUB-013.
+  meson_build mpv "${MPV_FLAGS[@]}" -Dc_args="$HARDEN $VKINC -I$PREFIX/include"     -Dc_link_args="$LDHARDEN -L$PREFIX/lib -liconv"
+
 
   # Sources and archives (TLS: none on Android, I/O reaches curl through the app's stream callbacks)
   cmake_build libsmb2 -DENABLE_EXAMPLES=OFF -DENABLE_LIBKRB5=OFF -DENABLE_GSSAPI=OFF -DBUILD_SHARED_LIBS=ON
@@ -423,6 +449,9 @@ recipes() {
 
 # --- staging, checks, packaging ---------------------------------------------------------------
 
+# Installed by their build systems but neither linked by another library nor loaded by the app through FFI
+# (mediahro packages/mediahro_ffi NativeLibrary): left out of the archive (install size, docs/11 §5).
+DROP_LIBS="libSPIRV-Tools-shared.so libgirepository-2.0.so libgthread-2.0.so libpcre2-posix.so libparakeet.so libraw_r.so libwebpdecoder.so"
 ANDROID_SYSTEM_LIBS="libc.so libm.so libdl.so liblog.so libz.so libandroid.so libmediandk.so libvulkan.so libEGL.so libGLESv2.so libGLESv3.so libOpenSLES.so libaaudio.so libjnigraphics.so libc++_shared.so"
 
 check_elf() {  # check_elf <dir> → every .so is hardened, 16 KB aligned, unversioned, and needs only shipped or system libs
@@ -461,14 +490,30 @@ stage_abi() {
   local st="$WORK/$ABI/staging"
   rm -rf "$st"; mkdir -p "$st/lib" "$st/include" "$st/licenses" "$st/build-info"
   local f
-  for f in "$PREFIX"/lib/*.so; do
-    [ -L "$f" ] && continue
-    cp "$f" "$st/lib/"
+  # Only the shared objects this build recorded (build-info "files"), never leftovers in the prefix.
+  local name
+  for name in $(python3 -c 'import json,sys,pathlib
+for p in sorted(pathlib.Path(sys.argv[1]).glob("*.json")):
+    print(*[f for f in json.loads(p.read_text()).get("files", []) if f.endswith(".so")])' "$INFO"); do
+    [[ " $DROP_LIBS " == *" $name "* ]] && continue
+    [ -L "$PREFIX/lib/$name" ] && continue  # e.g. libOpenEXR.so -> libOpenEXR-3_5.so: ship the real file once
+    cp "$PREFIX/lib/$name" "$st/lib/"
   done
   cp "$TOOLCHAIN/sysroot/usr/lib/$HOST/libc++_shared.so" "$st/lib/"
   for f in "$st"/lib/*.so; do "$STRIP" --strip-unneeded "$f"; done
   cp -a "$PREFIX/include/." "$st/include/"
   cp "$INFO"/*.json "$st/build-info/"
+  python3 - "$st/build-info" $DROP_LIBS <<'PY'
+import json, pathlib, sys
+drop = set(sys.argv[2:])
+for p in pathlib.Path(sys.argv[1]).glob("*.json"):
+    d = json.loads(p.read_text())
+    gone = sorted(drop & set(d.get("files", [])))
+    if gone:
+        d["files"] = [f for f in d["files"] if f not in drop]
+        d["not_shipped"] = gone
+        p.write_text(json.dumps(d, indent=2))
+PY
   # Licence texts: LGPL/permissive texts only, never a GPL text for a component taken under another licence.
   local lic name
   declare -A LIC=(
@@ -494,6 +539,7 @@ stage_abi() {
   done
   { echo "libc++ (Android NDK $NDK_REV): Apache-2.0 WITH LLVM-exception"; head -c 200000 "$NDK/NOTICE" 2>/dev/null || true; } > "$st/licenses/libc++.txt"
   check_elf "$st/lib"
+  python3 "$ROOT/scripts/elf_symbols.py" "$st/lib" "$TOOLCHAIN/sysroot/usr/lib/$HOST/$API" "$NM" "$READELF"
   local gpl
   gpl="$(python3 - "$st/build-info" <<'PY'
 import json, pathlib, sys
