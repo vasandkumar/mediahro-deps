@@ -1,0 +1,35 @@
+marian-dev 2781d73: 32-bit ARM has no vcvtnq_s32_f32.
+
+src/tensors/cpu/ruy_interface.h quantises activations to int8 with
+vcvtnq_s32_f32 (float to int32, round to nearest, ties to even), which is an
+ARMv8 instruction, so Marian did not compile for armeabi-v7a. On 32-bit ARM
+a helper now rounds each lane with lrintf. In the default rounding mode
+that is the same round-to-nearest-even, so armv7 quantises exactly like
+arm64. AArch64 code is unchanged.
+
+Licence: modification of Marian (MIT), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the marian-dev root.
+
+--- a/src/tensors/cpu/ruy_interface.h
++++ b/src/tensors/cpu/ruy_interface.h
+@@ -28,6 +28,20 @@
+ 
+ #if RUY_PLATFORM_NEON
+ 
++#if !defined(__aarch64__)
++// 32-bit ARM has no vcvtnq_s32_f32 (ARMv8). Round each lane to nearest, ties to even, as AArch64 does:
++// lrintf uses the default rounding mode (round to nearest even).
++#include <cmath>
++static inline int32x4_t marian_vcvtnq_s32_f32(float32x4_t v) {
++  float f[4];
++  int32_t r[4];
++  vst1q_f32(f, v);
++  for(int i = 0; i < 4; ++i) r[i] = static_cast<int32_t>(lrintf(f[i]));
++  return vld1q_s32(r);
++}
++#define vcvtnq_s32_f32 marian_vcvtnq_s32_f32
++#endif
++
+ /*
+  * Optimized path using ARM NEON SIMD intrinsics. Currently only supports int8_t.
+  */

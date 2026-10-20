@@ -1,0 +1,56 @@
+simd_utils d0793d8: build for 32-bit ARM (armeabi-v7a).
+
+Marian's ARM path (simd_utils' sse2neon) assumed AArch64 in three places,
+so libbergamot did not compile for armeabi-v7a:
+- sse2neon_wrapper.h _mm_cvtpd_epi64: the non-AArch64 branch called
+  _mm_set_epi64 (two __m64) with two int64_t; it is _mm_set_epi64x.
+- sse2neon.h _mm_stream_pd: clang's __builtin_nontemporal_store branch casts
+  to float64x2_t, which exists only on AArch64. It is now taken only there;
+  32-bit ARM uses the existing fallback.
+- neon_mathfun.h: vfmaq_f32 / vfmaq_n_f32 (fused multiply-add) need VFPv4,
+  beyond the armeabi-v7a baseline (NEON + VFPv3). Without __ARM_FEATURE_FMA
+  on 32-bit ARM they map to vmlaq_f32 / vmlaq_n_f32: the same a + b * c, not
+  fused (one more rounding), on every armv7 device.
+AArch64 code is unchanged.
+
+Licence: modification of simd_utils (BSD-2-Clause), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the simd_utils root.
+
+--- a/neon_mathfun.h
++++ b/neon_mathfun.h
+@@ -31,6 +31,13 @@
+ #define INC_SIMD_NEON_MATHFUN_H_
+ 
+ #include <arm_neon.h>
++#if !defined(__aarch64__) && !defined(__ARM_FEATURE_FMA)
++/* 32-bit ARM without VFPv4 (armeabi-v7a baseline): multiply-accumulate instead of fused multiply-add. */
++#define vfmaq_f32(a, b, c) vmlaq_f32((a), (b), (c))
++#define vfmaq_n_f32(a, b, n) vmlaq_n_f32((a), (b), (n))
++#endif
++
++#include <arm_neon.h>
+ 
+ #include "sse2neon_wrapper.h"
+ 
+--- a/sse2neon.h
++++ b/sse2neon.h
+@@ -5988,7 +5988,7 @@
+ // https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_stream_pd
+ FORCE_INLINE void _mm_stream_pd(double *p, __m128d a)
+ {
+-#if __has_builtin(__builtin_nontemporal_store)
++#if __has_builtin(__builtin_nontemporal_store) && defined(__aarch64__)
+     __builtin_nontemporal_store(a, (float64x2_t *) p);
+ #elif defined(__aarch64__)
+     vst1q_f64(p, vreinterpretq_f64_m128d(a));
+--- a/sse2neon_wrapper.h
++++ b/sse2neon_wrapper.h
+@@ -211,7 +211,7 @@
+ #else
+     int64_t a0 = (int64_t) ((double *) &a)[0];
+     int64_t a1 = (int64_t) ((double *) &a)[1];
+-    return _mm_set_epi64(a1, a0);
++    return _mm_set_epi64x(a1, a0);
+ #endif
+ }
+ 
