@@ -1,0 +1,26 @@
+marian-dev 2781d73: faiss/VectorTransform.cpp includes no SSE header.
+
+The file uses __m128 and _mm_* under `#ifdef __SSE__` but never includes
+<xmmintrin.h>; it relied on a header that an x86 Linux toolchain pulled in
+transitively. With the Android NDK for x86_64 the macro is set and the types
+are missing, so Marian did not compile for x86_64. The header is now included
+under the same condition (x86 targets only). Nothing changes for ARM, where
+__SSE__ is not defined. __SSE3__ (for _mm_hadd_ps) is set by the x86_64
+baseline the NDK uses.
+
+Licence: modification of Marian (MIT), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the marian-dev root.
+
+--- a/src/3rd_party/faiss/VectorTransform.cpp
++++ b/src/3rd_party/faiss/VectorTransform.cpp
+@@ -13,6 +13,10 @@
+ #include <cmath>
+ #include <cstring>
+ #include <memory>
++
++#ifdef __SSE__
++#include <pmmintrin.h>
++#endif
+ 
+ #include <faiss/utils/random.h>
+ #include "common/logging.h"

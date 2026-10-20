@@ -520,6 +520,8 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   # Bergamot: bergamot-translator's CMake builds Marian, SentencePiece, ssplit and the GEMM back ends as static
   # libraries; the submodule directories are linked to their pinned sources. ARM uses ruy (int8 and SGEMM, with
   # simd_utils); x86_64 uses intgemm with run-time ISA dispatch and ruy SGEMM, so no BLAS (MKL is proprietary) is needed.
+  # Marian turns USE_RUY on by itself only for ARM; without it x86_64 never builds ruy's AVX kernels and libbergamot.so
+  # leaves ruy::KernelFloatAvx* undefined, so USE_RUY is set for every ABI.
   local bt="$SRC/bergamot-translator" mr="$SRC/marian-dev" sub
   for sub in 3rd_party/marian-dev:marian-dev 3rd_party/ssplit-cpp:ssplit-cpp; do
     rm -rf "${bt:?}/${sub%%:*}"; ln -sfn "$SRC/${sub##*:}" "$bt/${sub%%:*}"
@@ -529,7 +531,7 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   local barch; case "$ABI" in arm64-v8a) barch=armv8-a ;; armeabi-v7a) barch=armv7-a ;; x86_64) barch=x86-64 ;; esac
   cmake_opts bergamot-translator -DBUILD_SHARED_LIBS=OFF -DCOMPILE_WASM=OFF -DUSE_WASM_COMPATIBLE_SOURCE=OFF -DCOMPILE_TESTS=OFF \
     -DCOMPILE_UNIT_TESTS=OFF -DCOMPILE_PYTHON=OFF -DGIT_SUBMODULE=OFF -DBUILD_ARCH="$barch" -DCOMPILE_CUDA=OFF -DUSE_MKL=OFF \
-    -DUSE_FBGEMM=OFF -DUSE_RUY_SGEMM=ON -DUSE_SENTENCEPIECE=ON -DUSE_STATIC_LIBS=ON -DCOMPILE_LIBRARY_ONLY=ON -DCOMPILE_SERVER=OFF \
+    -DUSE_FBGEMM=OFF -DUSE_RUY=ON -DUSE_RUY_SGEMM=ON -DUSE_SENTENCEPIECE=ON -DUSE_STATIC_LIBS=ON -DCOMPILE_LIBRARY_ONLY=ON -DCOMPILE_SERVER=OFF \
     -DUSE_DOXYGEN=OFF -DSSPLIT_USE_INTERNAL_PCRE2=OFF -DSSPLIT_COMPILE_LIBRARY_ONLY=ON -DUSE_NCCL=OFF -DUSE_CUDNN=OFF \
     -DSPM_ENABLE_SHARED=OFF -DSPM_ENABLE_TCMALLOC=OFF \
     -DMARIAN_GIT_REVISION="$(python3 -c 'import json,sys;print(next(l["version"] for l in json.load(open(sys.argv[1]))["libraries"] if l["name"]=="marian-dev"))' "$ROOT/versions.json")"
