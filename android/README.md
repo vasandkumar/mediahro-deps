@@ -30,9 +30,17 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
   (`-mbranch-protection=standard`), CET on x86_64 (`-fcf-protection=full`). Clang's software CFI
   (`-fsanitize=cfi`) is not used: it needs LTO across one DSO and does not cover calls between the
   shared libraries that make up this archive. armeabi-v7a has no hardware CFI.
-- **Size**: FFmpeg starts from `--disable-everything` and enables only the docs/04 components listed in
-  `flags/ffmpeg.common.flags` (a misspelt name fails the build); `-ffunction-sections -fdata-sections` +
-  `--gc-sections` everywhere; `-Os` for libraries off the hot path (`SIZE_LIBS`), `-O2` for codecs and renderers.
+- **Size** (ADR-020: features are never cut, speed budgets never move):
+  - FFmpeg starts from `--disable-everything` and enables only the docs/04 components in
+    `flags/ffmpeg.common.flags`; a misspelt name fails the build.
+  - ThinLTO (`-flto=thin`) on every compile and link, except libvpx (assembly, static into libavcodec).
+  - Section GC (`-ffunction-sections -fdata-sections`, `-Wl,--gc-sections`) and identical-code folding
+    (`-Wl,--icf=all`).
+  - `-O2` for decode and render paths (FFmpeg, dav1d, libplacebo, mpv, libass/freetype/harfbuzz/fribidi,
+    image codecs, whisper); `-Os` for the rest (`SIZE_LIBS`).
+  - `llvm-strip --strip-unneeded` on every shipped `.so`; one `libc++_shared.so`.
+  - To measure one optimisation, switch it off: `MEDIAHRO_NO_LTO=1`, `MEDIAHRO_NO_ICF=1`, `MEDIAHRO_NO_GC=1`,
+    `MEDIAHRO_ALL_O2=1`.
 - **C++**: `libc++_shared.so` from the NDK is in the archive (the NDK's recommendation when several
   shared libraries use C++).
 
