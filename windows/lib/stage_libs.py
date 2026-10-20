@@ -6,7 +6,10 @@ names is in bin/ or is vulkan-1.dll (linked, delay-loaded, driver-provided).
 Static archives of build-internal pieces (glslang.lib, SPIRV-Tools.lib, ...)
 have no import objects and are left out.
 
-Usage: python stage_libs.py PREFIX_LIB STAGE_LIB STAGE_BIN
+Import libraries of the DLLs listed in UNSHIPPED_FILE (ship.py prune) are left
+out with them.
+
+Usage: python stage_libs.py PREFIX_LIB STAGE_LIB STAGE_BIN [UNSHIPPED_FILE]
 """
 
 from __future__ import annotations
@@ -48,11 +51,14 @@ def import_dlls(lib: Path) -> set[str]:
 def main() -> int:
     src, dst, bindir = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     dlls = {p.name.lower() for p in bindir.glob("*.dll")} | EXTRA
+    unshipped = set(UNSHIPPED)
+    if len(sys.argv) > 4:
+        unshipped |= {n.strip().lower() for n in Path(sys.argv[4]).read_text(encoding="utf-8").split() if n.strip()}
     kept = skipped = 0
     errors = []
     for lib in sorted(src.glob("*.lib")):
         refs = import_dlls(lib)
-        if not refs or refs <= UNSHIPPED:
+        if not refs or refs <= unshipped:
             skipped += 1
         elif refs <= dlls:
             shutil.copy2(lib, dst / lib.name)

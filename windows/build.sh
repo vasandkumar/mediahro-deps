@@ -73,7 +73,7 @@ run_recipe() {
   libs=$(declare -f "r_$r" | grep -oE 'fetch [A-Za-z0-9._-]+' | awk '{print $2}' | sort -u)
   # Key: recipe, pins, toolchain files, and the flags and patches of its own
   # libraries (flags/<name>.*flags; libvips → vips.flags).
-  key=$( { declare -f "r_$r"; cat "$HERE/deps.json" "$ROOT/versions.json" "$T/meson.ini"
+  key=$( { declare -f "r_$r"; opt_level "$r"; cat "$HERE/deps.json" "$ROOT/versions.json" "$T/meson.ini"
            for n in $libs; do cat "$ROOT/flags/$n".*flags "$ROOT/flags/${n#lib}".*flags "$HERE/flags/$n.flags" \
                                   "$HERE/patches/$n"/*.patch "$ROOT/patches/$n"/*.patch 2>/dev/null || true; done; } | sha256sum | cut -c1-16)
   case ",${MEDIAHRO_REBUILD:-}," in *",$r,"*) rm -f "$stamp" ;; esac
@@ -89,7 +89,7 @@ run_recipe() {
   # Not inside `if`/`&&`: bash ignores errexit in a tested subshell.
   local rc
   set +e
-  ( set -euo pipefail; B=$T/build/$r; "r_$r" ) > "$logf" 2>&1
+  ( set -euo pipefail; B=$T/build/$r; set_opt_level "$r"; "r_$r" ) > "$logf" 2>&1
   rc=$?
   set -e
   if [ $rc -ne 0 ]; then

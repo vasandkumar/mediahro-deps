@@ -3,9 +3,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(bzip2 VERSION 1.0.8 LANGUAGES C)
 set(S "${BZIP2_SRC}")
-# Drop the def file's LIBRARY line so the import library names bz2.dll.
+# Drop the def file's LIBRARY line so the import library names bz2.dll, and
+# its DESCRIPTION line, which lld-link does not accept.
 file(READ ${S}/libbz2.def DEF)
-string(REGEX REPLACE "LIBRARY[^\n]*\n" "" DEF "${DEF}")
+string(REGEX REPLACE "(LIBRARY|DESCRIPTION)[^\n]*\n" "" DEF "${DEF}")
 file(WRITE ${CMAKE_BINARY_DIR}/bz2.def "${DEF}")
 add_library(bz2 SHARED
   ${S}/blocksort.c ${S}/huffman.c ${S}/crctable.c ${S}/randtable.c

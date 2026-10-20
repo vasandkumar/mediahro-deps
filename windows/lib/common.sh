@@ -125,17 +125,28 @@ write_toolchains() {
   esac
   # Hardening (docs/09 §2, lane brief): Control Flow Guard, ASLR with high
   # entropy, DEP, /GS stack cookies; CET shadow-stack compatibility on x64.
-  HARDEN_CFLAGS="-guard:cf -GS -Gy -Gw -Zc:inline"
-  HARDEN_LDFLAGS="-guard:cf -DYNAMICBASE -HIGHENTROPYVA -NXCOMPAT -OPT:REF -OPT:ICF -INCREMENTAL:NO"
+  HARDEN_CFLAGS="-guard:cf -GS -Zc:inline"
+  HARDEN_LDFLAGS="-guard:cf -DYNAMICBASE -HIGHENTROPYVA -NXCOMPAT -INCREMENTAL:NO"
   [ "$arch" = x64 ] && HARDEN_LDFLAGS="$HARDEN_LDFLAGS -CETCOMPAT"
-  cflags="$HARDEN_CFLAGS -Wno-unused-command-line-argument -I$(w "$PREFIX/include")"
+  # Size (ADR-020, b4a-adr020-flags.md): function/data sections with section
+  # GC, identical-code folding, ThinLTO (clang-cl bitcode, lld-link). Each can
+  # be switched off for the per-optimisation measurement (windows/README.md).
+  SIZE_CFLAGS="-Gy -Gw" SIZE_LDFLAGS="-OPT:REF -OPT:ICF" LTO_CFLAGS="-flto=thin"
+  [ -n "${MEDIAHRO_NO_GC:-}" ] && { SIZE_CFLAGS="-Gy- -Gw-"; SIZE_LDFLAGS="-OPT:NOREF ${SIZE_LDFLAGS#-OPT:REF }"; }
+  [ -n "${MEDIAHRO_NO_ICF:-}" ] && SIZE_LDFLAGS="${SIZE_LDFLAGS% -OPT:ICF} -OPT:NOICF"
+  [ -n "${MEDIAHRO_NO_LTO:-}" ] && LTO_CFLAGS=
+  HARDEN_CFLAGS="$HARDEN_CFLAGS $SIZE_CFLAGS"
+  HARDEN_LDFLAGS="$HARDEN_LDFLAGS $SIZE_LDFLAGS"
+  cflags="$HARDEN_CFLAGS $LTO_CFLAGS -Wno-unused-command-line-argument -I$(w "$PREFIX/include")"
   ldflags="$HARDEN_LDFLAGS -LIBPATH:$(w "$PREFIX/lib")"
   CC_W="$(w "$LLVM/bin/clang-cl.exe")"
   # /clang:--target (not --target=): meson's rc.exe wrapper would hand a
   # "--" argument on to rc.exe.
   CC_TARGET_ARG="/clang:--target=$CLANG_TARGET"
-  LINK_W="$(w "$MSVC_BIN/link.exe")"
-  LIB_W="$(w "$MSVC_BIN/lib.exe")"
+  # LLVM's linker and librarian read the ThinLTO bitcode objects (MSVC's
+  # link.exe / lib.exe cannot); the CRT, SDK and delayimp.lib stay MSVC's.
+  LINK_W="$(w "$LLVM/bin/lld-link.exe")"
+  LIB_W="$(w "$LLVM/bin/llvm-lib.exe")"
   RC_W="$(w "$(command -v rc.exe)")"
   MT_W="$(w "$(command -v mt.exe)")"
   PKGCONF_W="$(w "$WORK/tools/bin/pkgconf.exe")"
@@ -146,8 +157,8 @@ write_toolchains() {
 [binaries]
 c = ['$CC_W', '$CC_TARGET_ARG']
 cpp = ['$CC_W', '$CC_TARGET_ARG']
-c_ld = 'link'
-cpp_ld = 'link'
+c_ld = 'lld-link'
+cpp_ld = 'lld-link'
 ar = '$LIB_W'
 windres = '$RC_W'
 nasm = '$(w "$WORK/tools/bin/nasm.exe")'
@@ -344,6 +355,22 @@ PY
 
 # --------------------------------------------------------------- builders
 
+# Optimisation level (ADR-020): /O2 on the decode, render and image paths,
+# /O1 (clang -Os) for the recipes in SIZE_RECIPES (recipes.sh).
+# MEDIAHRO_ALL_O2 builds everything at /O2 for the size measurement.
+opt_level() {  # opt_level RECIPE -> O1 | O2
+  # shellcheck disable=SC2086
+  if [ -z "${MEDIAHRO_ALL_O2:-}" ] && [[ " $(echo $SIZE_RECIPES) " == *" $1 "* ]]; then echo O1; else echo O2; fi
+}
+set_opt_level() {  # set_opt_level RECIPE: OPT_CMAKE / OPT_MESON for the builders
+  OPT_CMAKE=() OPT_MESON=()
+  if [ "$(opt_level "$1")" = O1 ]; then
+    OPT_CMAKE=("-DCMAKE_C_FLAGS_RELEASE=-O1 -DNDEBUG" "-DCMAKE_CXX_FLAGS_RELEASE=-O1 -DNDEBUG")
+    OPT_MESON=(-Doptimization=s)
+  fi
+}
+OPT_CMAKE=() OPT_MESON=()
+
 cmake_build() {  # SRC BUILD [cmake args...]
   local s=$1 b=$2; shift 2
   CONF_ARGS=("$@")
@@ -354,7 +381,7 @@ cmake_build() {  # SRC BUILD [cmake args...]
     -DCMAKE_INSTALL_PREFIX="$(w "$PREFIX")" \
     -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_BINDIR=bin -DCMAKE_INSTALL_INCLUDEDIR=include \
     -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF \
-    -DCMAKE_POLICY_DEFAULT_CMP0091=NEW "$@"
+    -DCMAKE_POLICY_DEFAULT_CMP0091=NEW "${OPT_CMAKE[@]}" "$@"
   cmake --build "$(w "$b")" --parallel "$JOBS"
   cmake --install "$(w "$b")"
 }
@@ -380,7 +407,7 @@ meson_build() {  # SRC BUILD [meson args...]
     machine+=("${MESON_MACHINE%%=*}=$(w "$b.extra.ini")")
   fi
   meson setup "$(w "$b")" "$(w "$s")" "${machine[@]}" \
-    --prefix="$(w "$PREFIX")" --libdir=lib --bindir=bin --includedir=include "$@"
+    --prefix="$(w "$PREFIX")" --libdir=lib --bindir=bin --includedir=include "${OPT_MESON[@]}" "$@"
   meson compile -C "$(w "$b")" -j "$JOBS"
   meson install -C "$(w "$b")" --no-rebuild
 }

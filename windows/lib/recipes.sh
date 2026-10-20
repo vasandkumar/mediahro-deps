@@ -13,6 +13,14 @@ freetype fribidi harfbuzz fontconfig libass libplacebo uchardet libjpeg_turbo li
 libspng libdeflate libtiff imath openexr cgif libavif libraw libexif pcre2 proxy_libintl libffi glib libvips
 libssh2 curl libsmb2 libnfs libarchive libebur128 chromaprint whisper_cpp"
 
+# Built at /O1 (clang -Os): off the decode, render and image hot paths
+# (ADR-020; the split android/build.sh uses, b4a-adr020-flags.md). Everything
+# else is /O2: FFmpeg, dav1d, libvpx, opus, shaderc, SPIRV-Cross, libplacebo,
+# mpv, libass, freetype, harfbuzz, fribidi, the image codecs, libvips, whisper.
+SIZE_RECIPES="bzip2 brotli libdeflate expat libffi pcre2 glib fontconfig uchardet win_iconv libudfread libbluray
+libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint
+vulkan_loader libogg flac cgif proxy_libintl libssh2"
+
 # ------------------------------------------------------------ compression
 
 r_zlib() {
@@ -153,7 +161,8 @@ r_flac() {
 
 # libvpx has no shared-library support for MSVC: build vpxmd.lib with its
 # MSBuild projects (cl.exe; CFG through the CL environment variable), then
-# link vpx.dll from it with upstream's export lists.
+# link vpx.dll from it with upstream's export lists. cl.exe objects, so no
+# ThinLTO here (as on Android, where libvpx is the LTO exception too).
 r_libvpx() {
   local s vs out f; s=$(fetch libvpx)
   vs=${VisualStudioVersion%%.*}
@@ -255,14 +264,24 @@ r_ffmpeg() {
     host=(--host-cc="clang-cl -target x86_64-pc-windows-msvc" --host-ld="$s/compat/windows/mslink"
           --host-ldflags="-MACHINE:X64 $lp")
   fi
-  # Host tools (table generators) link with MSVC link.exe like the libraries;
-  # clang-cl from the LLVM release would otherwise drive lld-link.
-  CONF_ARGS=("${args[@]}" "${cross[@]}" --arch="$FF_ARCH" --cc="$cc" --cxx="$cc" "${host[@]}"
+  # The libraries link with lld-link (ThinLTO bitcode objects); host tools
+  # (table generators, no LTO) with MSVC link.exe through mslink.
+  CONF_ARGS=("${args[@]}" "${cross[@]}" --arch="$FF_ARCH" --cc="$cc" --cxx="$cc" --ld=lld-link "${host[@]}"
              --pkg-config=pkgconf --prefix="$(w "$PREFIX")"
-             --extra-cflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")" --extra-cxxflags="-MD $HARDEN_CFLAGS -I$(w "$PREFIX/include")"
+             --extra-cflags="-MD $HARDEN_CFLAGS $LTO_CFLAGS -I$(w "$PREFIX/include")"
+             --extra-cxxflags="-MD $HARDEN_CFLAGS $LTO_CFLAGS -I$(w "$PREFIX/include")"
              --extra-ldflags="$HARDEN_LDFLAGS -LIBPATH:$(w "$PREFIX/lib")")
   "$s/configure" "${CONF_ARGS[@]}" > configure.out 2>&1 || { cat configure.out; tail -80 ffbuild/config.log; return 1; }
   cat configure.out
+  # makedef lists each DLL's exports from a temporary library of its objects:
+  # lib.exe and dumpbin cannot read bitcode, llvm-ar and llvm-nm can.
+  grep -q '^SLIB_CREATE_DEF_CMD=LDFLAGS=' ffbuild/config.mak || { echo "ffmpeg: SLIB_CREATE_DEF_CMD changed"; return 1; }
+  sed -i 's/^SLIB_CREATE_DEF_CMD=LDFLAGS=/SLIB_CREATE_DEF_CMD=AR="llvm-ar" NM="llvm-nm" LDFLAGS=/' ffbuild/config.mak
+  # x86 MLP/TrueHD DSP defines its jump-table labels inside a function's inline
+  # asm, which a bitcode symbol table does not list: native object for it.
+  if [ -n "$LTO_CFLAGS" ] && [ "$ARCH" = x64 ]; then
+    echo 'libavcodec/x86/mlpdsp_init.o: CFLAGS += -fno-lto' >> ffbuild/config.mak
+  fi
   # --disable-everything makes every component explicit: a misspelt name must
   # not drop a format silently (same guard as android/build.sh).
   if grep -E "did not match anything|Unknown option" configure.out; then echo "ffmpeg: fix the flags above"; return 1; fi

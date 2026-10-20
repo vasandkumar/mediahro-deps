@@ -9,12 +9,13 @@ It runs from Git Bash or MSYS2 bash (the CI job runs it from Git Bash on `window
 | Piece | Source | Notes |
 |---|---|---|
 | clang-cl 23 | LLVM release tarball pinned in `deps.json` | Same compiler locally and in CI; `/clang:--target=` picks x64 or arm64 |
-| MSVC `link.exe`, `lib.exe`, `rc.exe`, CRT, Windows SDK | Visual Studio 2022 or 2026 found with `vswhere` | arm64 needs the `VC.Tools.ARM64` component |
+| lld-link, llvm-lib, llvm-ar, llvm-nm | The same LLVM release | They read the ThinLTO bitcode objects that MSVC's tools cannot |
+| MSVC `rc.exe`, `link.exe` (host tools, libvpx), CRT, Windows SDK | Visual Studio 2022 or 2026 found with `vswhere` | arm64 needs the `VC.Tools.ARM64` component |
 | meson, ninja, cmake, jinja2 | `requirements.txt`, `pip --require-hashes` | Private venv in the work dir |
 | nasm, pkgconf | `deps.json` | pkgconf is built for the host |
 | libffi meson port | `deps.json` (wrapdb `libffi_3.8.0-1` patch archive) | Build files only, laid over the verified libffi source |
 
-Hardening on every binary: `/guard:cf` (compile and link), `/GS`, `/DYNAMICBASE`, `/HIGHENTROPYVA`, `/NXCOMPAT`, `/OPT:REF,ICF`, plus `/CETCOMPAT` on x64. The CRT is `/MD`: the app ships the VC++ 2015-2022 runtime, as every Flutter Windows app does. `lib/check_pe.py` fails the build unless every staged DLL meets these checks:
+Hardening on every binary: `/guard:cf` (compile and link), `/GS`, `/DYNAMICBASE`, `/HIGHENTROPYVA`, `/NXCOMPAT`, plus `/CETCOMPAT` on x64. The CRT is `/MD`: the app ships the VC++ 2015-2022 runtime, as every Flutter Windows app does. `lib/check_pe.py` fails the build unless every staged DLL meets these checks:
 - right machine type
 - the four DllCharacteristics bits set, and a CFG function table present
 - imports only system DLLs, the MSVC runtime or other DLLs in the archive
@@ -22,6 +23,22 @@ Hardening on every binary: `/guard:cf` (compile and link), `/GS`, `/DYNAMICBASE`
 - `vulkan-1.dll` only as a delay-load import
 
 `lib/stage_libs.py` ships only import libraries, and each must name a DLL that is staged.
+
+Size (ADR-020; the set B4a measured on Android, `b4a-adr020-flags.md`). Features are never cut for size:
+- **ThinLTO**: `-flto=thin` on every library compiled by clang-cl, linked by lld-link. libvpx is the exception: its MSBuild projects use cl.exe.
+- **Section GC and identical-code folding**: `/Gy /Gw` with `/OPT:REF /OPT:ICF`.
+- **Optimisation level**: `/O2` on the decode, render and image paths, and `/O1` (clang `-Os`) for the libraries in `SIZE_RECIPES` (`lib/recipes.sh`).
+- **No debug info** in the DLLs.
+- **Only what the app opens ships**: `lib/ship.py` keeps the DLLs in `SHIP_ROOTS` (`lib/stage.sh`) and everything they import or delay-load. The roots are:
+  - the FFI libraries of `mediahro_ffi`
+  - libmpv
+  - the FFmpeg libraries the engine remuxes with
+  - libssh2
+  - the ggml CPU variants
+
+  The other DLLs a build produces appear in `build-info` under `not_shipped`.
+
+For the per-optimisation table, `MEDIAHRO_NO_LTO`, `MEDIAHRO_NO_ICF`, `MEDIAHRO_NO_GC` and `MEDIAHRO_ALL_O2` each switch one of these off. The build log prints each DLL's size (`size:` lines) and the `bin/` total.
 
 ## Sources, patches, licence evidence
 
