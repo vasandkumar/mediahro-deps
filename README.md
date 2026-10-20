@@ -25,3 +25,19 @@ Build scripts for every native library Mediahro ships (Mediahro `docs/05` §10),
 - Never: exiv2, x264, x265, rubberband, libdvdcss / libdvdnav / libdvdread, libpostproc, smbclient, libcdio, frei0r; no libheif / libde265 on Windows; no OpenSSL (TLS from the OS).
 - Hardened builds: `_FORTIFY_SOURCE=2`, stack protector, PIE, CFI / `/guard:cf` where supported.
 - Sources are verified against the SHA-256 in `versions.json` before building; releases publish archives with `.sha256` files.
+
+## Releases (built locally; no GitHub CI)
+
+The owner turned GitHub CI off (2026-10-20), so `.github/workflows/build.yml` runs only when someone starts it by hand.
+GitHub only hosts the release files. A release is built on the B4 lane's machine with no cache and uploaded as-is:
+
+1. `android/build.sh dist` with `MEDIAHRO_CACHE` unset: a clean build of every ABI, which runs verify_flags, the source
+   scan, check_elf, the symbol closure and package.py.
+2. `scripts/sources.py fetch` plus `tar` gives `mediahro-deps-sources.tar`, the LGPL source offer: every pinned upstream
+   source, `versions.json`, `keys/` and `patches/`.
+3. `sha256sum` writes the `.sha256` files and `SHA256SUMS`.
+4. `gh release create <tag> … --notes-file notes.md --prerelease` for a platform-suffixed tag (`v…-android.N`). The
+   notes carry the build summary, the size of each archive and the licence-scan result.
+
+Mediahro's `tools/deps/pin.py <tag>` re-downloads every archive and checks it against `SHA256SUMS` before pinning it in
+`deps.lock`.

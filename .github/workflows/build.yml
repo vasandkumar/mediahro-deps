@@ -1,12 +1,11 @@
 name: build
-# Builds the native dependency archives (README.md "Targets") on workflow_dispatch
-# and on tags, and publishes tags as GitHub Releases with the archives,
-# their .sha256 files and SHA256SUMS for Mediahro's deps.lock.
+# Builds the native dependency archives (README.md "Targets") and, for a tag ref,
+# publishes them as a GitHub Release with their .sha256 files and SHA256SUMS.
+#
+# Manual only (owner, 2026-10-20: no GitHub CI). Releases are built locally (android/build.sh
+# with no cache) and uploaded with `gh release create`; see README.md "Releases". This workflow
+# stays for a manual workflow_dispatch when the owner turns CI back on.
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
   workflow_dispatch:
     inputs:
       platforms:
