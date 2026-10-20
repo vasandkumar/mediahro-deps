@@ -16,6 +16,10 @@
   python scripts/sources.py list [--platform android]
       Prints name, version and source URL.
 
+Downloads fall back to the hosts in versions.json "mirrors" (URL prefix -> same
+files elsewhere) when the upstream host fails; the hash and signature checks
+are the same whichever host served the file.
+
 Patches in patches/<name>/*.patch are applied after extraction (and listed
 in each archive's manifest). Sources with "verify": "git" (gitiles archives are not byte-stable) are
 cloned and checked out at the pinned commit instead of hashed.
@@ -24,6 +28,7 @@ cloned and checked out at the pinned commit instead of hashed.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -87,20 +92,35 @@ def applies(lib: dict, platform: str | None) -> bool:
     return platform is None or "platforms" not in lib or platform in lib["platforms"]
 
 
+@functools.lru_cache(maxsize=None)
+def mirror_urls(url: str) -> tuple[str, ...]:
+    """url first, then the same path on every mirror of its host (versions.json "mirrors")."""
+    urls = [url]
+    for prefix, alternates in load().get("mirrors", {}).items():
+        if url.startswith(prefix):
+            urls += [alt + url[len(prefix):] for alt in alternates]
+    return tuple(urls)
+
+
 def http_get(url: str, dest: Path, attempts: int = 4) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
+    errors = []
     for n in range(1, attempts + 1):
-        try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:  # noqa: S310 - reviewed URLs
-                shutil.copyfileobj(r, f, 1 << 20)
-            tmp.replace(dest)
-            return
-        except Exception as e:  # noqa: BLE001 - retried, then reported
-            if n == attempts:
-                raise SystemExit(f"sources: download failed: {url}: {e}") from e
+        for u in mirror_urls(url):
+            try:
+                req = urllib.request.Request(u, headers=UA)
+                with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:  # noqa: S310 - reviewed URLs
+                    shutil.copyfileobj(r, f, 1 << 20)
+                tmp.replace(dest)
+                if u != url:
+                    print(f"  {dest.name}: served by mirror {u.split('/')[2]}")
+                return
+            except Exception as e:  # noqa: BLE001 - retried, then reported
+                errors.append(f"{u}: {e}")
+        if n < attempts:
             time.sleep(3 * n)
+    raise SystemExit("sources: download failed:\n  " + "\n  ".join(errors[-len(mirror_urls(url)):]))
 
 
 def http_text(url: str) -> str:
