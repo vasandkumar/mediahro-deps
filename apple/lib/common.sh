@@ -20,8 +20,12 @@ NO_LTO_LIBS="libvpx"
 OPT_LEVEL=-O2
 
 # set_opt_flags RECIPE : compile/link flags for one library. Measurement
-# switches (one clean build each, ADR-020 table): MEDIAHRO_LTO, MEDIAHRO_NO_GC,
-# MEDIAHRO_ALL_O2.
+# switches (one clean build each, ADR-020 table): MEDIAHRO_LTO, MEDIAHRO_NO_ICF,
+# MEDIAHRO_NO_GC, MEDIAHRO_ALL_O2.
+#
+# Identical-code folding: ld64 / ld-prime fold identical code by default
+# (-deduplicate); there is no --icf=all. MEDIAHRO_NO_ICF links with
+# -Wl,-no_deduplicate to measure what it saves.
 #
 # ThinLTO is opt-in on Apple: measured on ios-arm64 it makes the shipped set
 # 3.6 MB *larger* (ld64's LTO back end inlines across modules: avcodec +1.1 MB,
@@ -38,8 +42,10 @@ set_opt_flags() {
   fi
   if [ -n "${MEDIAHRO_LTO:-}" ] && ! in_list "$r" $NO_LTO_LIBS; then
     HARDEN_CFLAGS+=" -flto=thin"
-    ld+=" -flto=thin"
+    # On Darwin the LTO back end takes its optimisation level from the link line.
+    ld+=" $OPT_LEVEL -flto=thin"
   fi
+  if [ -n "${MEDIAHRO_NO_ICF:-}" ]; then ld+=" -Wl,-no_deduplicate"; fi
   HARDEN_LDFLAGS="-Wl,-headerpad_max_install_names$ld"
   write_meson_cross
 }
