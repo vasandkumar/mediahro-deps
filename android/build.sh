@@ -464,7 +464,8 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   # arrive as pixels through Leptonica, so Tesseract's own libtiff input is off. Language data is downloaded by the app.
   cmake_build tesseract -DBUILD_TRAINING_TOOLS=OFF -DBUILD_TESTS=OFF -DDISABLE_ARCHIVE=ON -DDISABLE_CURL=ON -DDISABLE_TIFF=ON \
     -DOPENMP_BUILD=OFF -DGRAPHICS_DISABLED=ON -DENABLE_NATIVE=OFF -DINSTALL_CONFIGS=OFF -DENABLE_CCACHE=OFF \
-    -DENABLE_PRECOMPILED_HEADERS=OFF -DSW_BUILD=OFF -DLeptonica_DIR="$PREFIX/lib/cmake/leptonica" \n    -DLEPT_TIFF_RESULT=0 -DLEPT_TIFF_RESULT__TRYRUN_OUTPUT=  # cross build: its Leptonica TIFF probe cannot run
+    -DENABLE_PRECOMPILED_HEADERS=OFF -DSW_BUILD=OFF -DLeptonica_DIR="$PREFIX/lib/cmake/leptonica" \
+    -DLEPT_TIFF_RESULT=0  # cross build: Tesseract's Leptonica TIFF probe cannot run
 }
 
 # --- staging, checks, packaging ---------------------------------------------------------------
