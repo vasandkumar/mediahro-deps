@@ -73,4 +73,8 @@
 # buffer/buffersink/abuffer/abuffersink are part of libavfilter's API in FFmpeg 8 and always built.
 --enable-filter=format,aformat,null,anull,scale,aresample,hwupload,hwdownload,hwmap,setpts,asetpts,settb,asettb,fps,split,asplit,copy,trim,atrim,concat
 --enable-filter=yadif,bwdif,transpose,hflip,vflip,rotate,crop,pad,setsar,setdar,unsharp,palettegen,paletteuse
+# VID-041 (ADR-033): 3D side-by-side/top-bottom to anaglyph or 2D (lutrgb, blend; crop/setsar above) and 360° / VR180 to
+# a flat view (v360). All LGPL-2.1+. Never stereo3d: vf_stereo3d.c is GPL (stereo3d_filter_deps="gpl");
+# scripts/ffmpeg_components.py fails the build if it, or any other GPL-only component, is enabled.
+--enable-filter=lutrgb,blend,v360
 --enable-filter=volume,equalizer,superequalizer,anequalizer,firequalizer,biquad,bass,treble,lowpass,highpass,bandpass,bandreject,lowshelf,highshelf,alimiter,acompressor,pan,channelmap,channelsplit,amerge,amix,stereotools,crossfeed,extrastereo,afade,acrossfade,loudnorm,ebur128,dynaudnorm,silenceremove,showspectrum,showwaves,showvolume,astats,aloop
