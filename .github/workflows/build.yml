@@ -72,7 +72,19 @@ jobs:
     steps:
       - id: p
         env: { PLATFORMS: "${{ inputs.platforms || 'android,apple,windows' }}" }
-        run: for p in android apple windows; do [[ ",${PLATFORMS// /}," == *",$p,"* ]] && echo "$p=true" >> "$GITHUB_OUTPUT" || echo "$p=false" >> "$GITHUB_OUTPUT"; done
+        # Tags: v…-android.N / v…-apple.N / v…-windows.N build that platform only (a single-platform
+        # pre-release); any other v* tag builds and requires all three.
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            case "$GITHUB_REF_NAME" in
+              *-android.*) PLATFORMS=android ;; *-apple.*) PLATFORMS=apple ;; *-windows.*) PLATFORMS=windows ;;
+              *) PLATFORMS=android,apple,windows ;;
+            esac
+          fi
+          echo "platforms: $PLATFORMS"
+          for p in android apple windows; do
+            [[ ",${PLATFORMS// /}," == *",$p,"* ]] && echo "$p=true" >> "$GITHUB_OUTPUT" || echo "$p=false" >> "$GITHUB_OUTPUT"
+          done
 
   sources:
     # The exact upstream sources of every build (LGPL source offer, docs/09 §2): published with the release.
@@ -117,7 +129,13 @@ jobs:
         run: |
           rev="$(python3 -c 'import json;print(json.load(open("versions.json"))["toolchains"]["android-ndk"]["revision"])')"
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          [ -d "$sdk/ndk/$rev" ] || yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$rev" > /dev/null
+          # sdkmanager occasionally gets a truncated archive ("Error on ZipFile unknown archive"): retry.
+          for attempt in 1 2 3; do
+            [ -f "$sdk/ndk/$rev/source.properties" ] && break
+            rm -rf "$sdk/ndk/$rev"
+            (yes || true) | "$sdk/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$rev" > /dev/null || true
+          done
+          [ -f "$sdk/ndk/$rev/source.properties" ] || { echo "::error::NDK $rev could not be installed"; exit 1; }
           echo "ANDROID_NDK_HOME=$sdk/ndk/$rev" >> "$GITHUB_ENV"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
