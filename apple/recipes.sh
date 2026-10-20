@@ -11,12 +11,6 @@ moltenvk glslang libplacebo ffmpeg mpv"
 # Pinned libraries built inside another recipe (their own build-info says where).
 COMPILED_IN="proxy-libintl spirv-cross cereal fast_float glad"
 
-# ADR-020, as on Android: libplacebo compiles GLSL with a static glslang, so
-# shaderc / SPIRV-Tools / SPIRV-Headers are not needed; FFmpeg decodes FLAC
-# itself and libvips has no GIF saver, so libogg / libFLAC / cgif have no user.
-# versions.json still lists them for Apple until lane B4a drops "apple" there;
-# until then package.py reports them under not_built.
-APPLE_NOT_BUILT="shaderc spirv-tools spirv-headers libogg flac cgif"
 
 # new_dylibs GLOB : dylibs installed by the current recipe whose name matches GLOB
 new_dylibs() {

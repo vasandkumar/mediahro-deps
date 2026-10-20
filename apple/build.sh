@@ -67,12 +67,13 @@ if [ -n "${MEDIAHRO_APPLE_MEASURE:-}" ] && [ -z "${MEDIAHRO_APPLE_VARIANT:-}" ];
     echo "| Variant (ios-arm64, shipped frameworks) | Stripped total | Unstripped total |"
     echo "|---|---:|---:|"
   } >"$table"
-  for v in all thin-lto no-gc all-o2; do
+  for v in all thin-lto no-icf no-gc all-o2; do
     log "measure: variant $v"
     env_args=(MEDIAHRO_APPLE_VARIANT="$v" MEDIAHRO_APPLE_SLICES=ios-arm64 MEDIAHRO_APPLE_WORK="$WORK/measure-$v"
       MEDIAHRO_APPLE_CACHE="$CACHE")
     case $v in
       thin-lto) env_args+=(MEDIAHRO_LTO=1) ;;
+      no-icf) env_args+=(MEDIAHRO_NO_ICF=1) ;;
       no-gc) env_args+=(MEDIAHRO_NO_GC=1) ;;
       all-o2) env_args+=(MEDIAHRO_ALL_O2=1) ;;
     esac
@@ -116,7 +117,7 @@ export PATH="$WORK/venv/bin:$PATH"
 python3 "$ROOT/scripts/verify_flags.py"
 # zlib, bzip2, libxml2 and libiconv come from the Apple SDK (versions.json limits them to other platforms).
 # shellcheck disable=SC2086
-python3 "$ROOT/scripts/sources.py" fetch --platform apple --dest "$SOURCES" --cache "$CACHE/downloads"   --skip $APPLE_NOT_BUILT >&2
+python3 "$ROOT/scripts/sources.py" fetch --platform apple --dest "$SOURCES" --cache "$CACHE/downloads" >&2
 VERSIONS_TSV="$WORK/versions.tsv"
 python3 - "$ROOT/versions.json" "$VERSIONS_TSV" <<'PY'
 import json, sys
@@ -131,7 +132,7 @@ PY
 # lists for Apple are skipped.
 APPLE_LIBS=$(awk -F'\t' '$4 == 1 { print $1 }' "$VERSIONS_TSV")
 for lib in $APPLE_LIBS; do
-  in_list "$lib" $RECIPES $COMPILED_IN $APPLE_NOT_BUILT || die "versions.json lists $lib for Apple but apple/recipes.sh has no recipe for it"
+  in_list "$lib" $RECIPES $COMPILED_IN || die "versions.json lists $lib for Apple but apple/recipes.sh has no recipe for it"
 done
 
 # --- build each slice ----------------------------------------------------------

@@ -28,7 +28,7 @@ The build also writes `apple-sizes.md` (thinned iOS arm64 and macOS universal to
 
 ## Libraries
 
-Every library in `versions.json` that applies to Apple; the build fails if one has neither a recipe nor an entry in `APPLE_NOT_BUILT` (`recipes.sh`: shaderc, SPIRV-Tools, SPIRV-Headers, libogg, FLAC, cgif — no user on Apple after ADR-020; lane B4a is removing `apple` from them in `versions.json`). zlib, bzip2, libxml2 and libiconv come from the Apple SDK. Sources are fetched by `../scripts/sources.py`, which checks the SHA-256 (and the OpenPGP signature where upstream signs) and applies `../patches/<name>/` before extracting.
+Every library in `versions.json` that applies to Apple; the build fails if one has no recipe (`versions.json` records why shaderc, SPIRV-Tools, SPIRV-Headers, libogg, FLAC, cgif and libssh2 are not built for Apple). zlib, bzip2, libxml2 and libiconv come from the Apple SDK. Sources are fetched by `../scripts/sources.py`, which checks the SHA-256 (and the OpenPGP signature where upstream signs) and applies `../patches/<name>/` before extracting.
 
 Components compiled into another library get their own `build-info/` entry with `compiled_into`: glslang (static, into `placebo`), SPIRV-Cross and cereal (into `MoltenVK`; MoltenVK's CMake is pointed at the pinned trees, so it clones nothing), fast_float and glad (libplacebo), Vulkan-Headers (headers). OpenEXR compiles its vendored OpenJPH into OpenEXRCore.
 
@@ -40,10 +40,11 @@ Same set as Android (`android/build.sh`), mapped to Apple's toolchain:
 
 - `-O2` on the decode / render / image hot paths; `-Os` for the libraries in `SIZE_LIBS` (`lib/common.sh`).
 - Section GC: `-ffunction-sections -fdata-sections` with `-Wl,-dead_strip`.
-- `strip -x` on every shipped binary. ld64 / ld-prime has no `--icf=all`.
+- `strip -x` on every shipped binary.
+- Identical-code folding: ld64 / ld-prime has no `--icf=all` but folds identical code by default (`-deduplicate`); `MEDIAHRO_NO_ICF` links with `-Wl,-no_deduplicate` to measure it.
 - ThinLTO is **off** by default on Apple (`MEDIAHRO_LTO=1` turns it on): on ios-arm64 it makes the shipped set 3.6 MB larger (ld64's LTO back end inlines across modules), and B4a measured it speed-neutral on FFmpeg decode.
 - FFmpeg from the shared `--disable-everything` + docs/04 component list, plus the VideoToolbox / AudioToolbox components in `../flags/ffmpeg.apple.flags`; configure fails on a component name it does not know.
-- `MEDIAHRO_APPLE_MEASURE=1` runs one clean ios-arm64 build per variant (default set, `MEDIAHRO_LTO`, `MEDIAHRO_NO_GC`, `MEDIAHRO_ALL_O2`; stripping from the same build) and writes `apple-size-table.md`.
+- `MEDIAHRO_APPLE_MEASURE=1` runs one clean ios-arm64 build per variant (default set, `MEDIAHRO_LTO`, `MEDIAHRO_NO_ICF`, `MEDIAHRO_NO_GC`, `MEDIAHRO_ALL_O2`; stripping from the same build) and writes `apple-size-table.md`.
 
 Measured (ios-arm64, shipped frameworks, stripped; run 39353528039 with ThinLTO on in every variant):
 
