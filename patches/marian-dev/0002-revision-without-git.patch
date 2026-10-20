@@ -1,0 +1,58 @@
+marian-dev 2781d73: name the revision without a .git checkout.
+
+src/CMakeLists.txt generates common/git_revision.h by running `git log` in
+Marian's checkout, and reads ../.git to do so. A pinned, hash-verified source
+archive has no .git, so configure fails. With -DMARIAN_GIT_REVISION=<text>
+(mediahro-deps passes the pinned commit), the header is written directly;
+without it, Marian's original git-based rule is unchanged.
+
+Licence: modification of Marian (MIT), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the marian-dev root.
+
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -147,22 +147,29 @@
+ #
+ # We set MARIAN_GIT_DIR to the appropriate path, depending on whether
+ # ${CMAKE_CURRENT_SOURCE_DIR}/../.git is a directory or file.
+-set(MARIAN_GIT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../.git)
+-if(NOT IS_DIRECTORY ${MARIAN_GIT_DIR}) # i.e., it's a submodule
+-  file(READ ${MARIAN_GIT_DIR} MARIAN_GIT_DIR)
+-  string(REGEX REPLACE "gitdir: (.*)\n" "\\1" MARIAN_GIT_DIR ${MARIAN_GIT_DIR})
+-  if(NOT IS_ABSOLUTE ${MARIAN_GIT_DIR})
+-    get_filename_component(MARIAN_GIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${MARIAN_GIT_DIR}" ABSOLUTE)
+-  endif()
+-endif(NOT IS_DIRECTORY ${MARIAN_GIT_DIR})
++if(MARIAN_GIT_REVISION)
++  # Built from a source archive (no .git): the caller names the revision.
++  file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h "#define GIT_REVISION \"${MARIAN_GIT_REVISION}\"
++")
++  add_custom_target(marian_version)
++else()
++  set(MARIAN_GIT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../.git)
++  if(NOT IS_DIRECTORY ${MARIAN_GIT_DIR}) # i.e., it's a submodule
++    file(READ ${MARIAN_GIT_DIR} MARIAN_GIT_DIR)
++    string(REGEX REPLACE "gitdir: (.*)\n" "\\1" MARIAN_GIT_DIR ${MARIAN_GIT_DIR})
++    if(NOT IS_ABSOLUTE ${MARIAN_GIT_DIR})
++      get_filename_component(MARIAN_GIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../${MARIAN_GIT_DIR}" ABSOLUTE)
++    endif()
++  endif(NOT IS_DIRECTORY ${MARIAN_GIT_DIR})
+ 
+-add_custom_command(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h
+-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+-  COMMAND git log -1 --pretty=format:\#define\ GIT_REVISION\ \"\%h\ \%ai\" > ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h
+-  DEPENDS ${MARIAN_GIT_DIR}/logs/HEAD
+-  VERBATIM
+-)
+-add_custom_target(marian_version DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h)
++  add_custom_command(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h
++    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
++    COMMAND git log -1 --pretty=format:\#define\ GIT_REVISION\ \"\%h\ \%ai\" > ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h
++    DEPENDS ${MARIAN_GIT_DIR}/logs/HEAD
++    VERBATIM
++  )
++  add_custom_target(marian_version DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/common/git_revision.h)
++endif()
+ add_dependencies(marian marian_version) # marian must depend on it so that it gets created first
+ # make sure all local dependencies are installed first before this is built
+ add_dependencies(marian 3rd_party_installs)

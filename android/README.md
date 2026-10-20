@@ -74,6 +74,13 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
   `libleptonica.so`. No traineddata ships: download `<lang>.traineddata` (tessdata_fast / tessdata_best) and pass its
   directory to `TessBaseAPIInit3`. The legacy engine is kept (OSD script detection needs it). No OpenMP: one
   `TessBaseAPI` per isolate. Leptonica reads JPEG, TIFF and WebP; no PNG or GIF (pass pixels with `TessBaseAPISetImage`).
+- CLD3 (language identification, ADR-034): `libcld3.so` exports only `include/mediahro_cld3.h` (`mh_cld3_*`, lane C1's
+  shim in `../shims/cld3`). The model is compiled in. protobuf-lite 21.12 is linked statically and hidden.
+- Bergamot (SUB-053 translation, ADR-034): `libbergamot.so` exports only `include/mediahro_bergamot.h` (`mh_bergamot_*`,
+  `../shims/bergamot`). Marian is CPU only: ruy (int8 and SGEMM) with simd_utils on ARM, and intgemm (run-time ISA
+  dispatch) with ruy SGEMM on x86_64, so there is no BLAS. It links the shipped `libpcre2-8.so`. No models ship: the app
+  downloads a language pair's model, vocabulary and shortlist after consent and passes their paths in the YAML config to
+  `mh_bergamot_load`.
 - libvulkan, libEGL, libGLESv2, libmediandk, libaaudio, libOpenSLES and libandroid are NDK system libraries.
 
 ## Development

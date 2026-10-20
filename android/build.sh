@@ -222,7 +222,18 @@ meson_build() {  # meson_build <name> [meson options...]
 
 cmake_build() {  # cmake_build <name> [cmake options...]   (CMAKE_SUBDIR selects a sub-directory)
   local name="$1"; shift
-  local opts=(-G Ninja -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
+  local opts; cmake_opts "$name" "$@"; opts=("${CMAKE_OPTS[@]}")
+  should_build "$name" "${opts[@]}" || return 0
+  local b="$BUILD/$name"; rm -rf "$b"
+  cmake -S "$SRC/$name/${CMAKE_SUBDIR:-}" -B "$b" "${opts[@]}"
+  cmake --build "$b" -j "$JOBS"
+  cmake --install "$b"
+  finish "$name" "$b"
+}
+
+cmake_opts() {  # cmake_opts <name> [cmake options...] → CMAKE_OPTS: the options every CMake build gets
+  local name="$1"; shift
+  CMAKE_OPTS=(-G Ninja -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" -DANDROID_STL=c++_shared
               -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON -DCMAKE_BUILD_TYPE=Release
               -DCMAKE_C_FLAGS_RELEASE="-O$(opt_level "$name") -DNDEBUG" -DCMAKE_CXX_FLAGS_RELEASE="-O$(opt_level "$name") -DNDEBUG"
@@ -232,12 +243,21 @@ cmake_build() {  # cmake_build <name> [cmake options...]   (CMAKE_SUBDIR selects
               -DCMAKE_SHARED_LINKER_FLAGS="$LDHARDEN" -DCMAKE_MODULE_LINKER_FLAGS="$LDHARDEN"
               -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DPKG_CONFIG_EXECUTABLE="$(command -v pkg-config)"
               -DCMAKE_ASM_NASM_COMPILER="$(command -v nasm)" "$@")
-  should_build "$name" "${opts[@]}" || return 0
-  local b="$BUILD/$name"; rm -rf "$b"
-  cmake -S "$SRC/$name/${CMAKE_SUBDIR:-}" -B "$b" "${opts[@]}"
-  cmake --build "$b" -j "$JOBS"
-  cmake --install "$b"
-  finish "$name" "$b"
+}
+
+host_protoc() {  # host_protoc → PROTOC: protoc for the build machine, from the pinned protobuf (once per run)
+  local h="$WORK/host/protobuf" stamp
+  stamp="$(cat "$SRC/protobuf/.mediahro-sha256")"
+  PROTOC="$h/build/protoc"
+  [ -x "$PROTOC" ] && [ "$(cat "$h/stamp" 2>/dev/null)" = "$stamp" ] && return 0
+  log "protobuf (host protoc)"
+  rm -rf "$h"; mkdir -p "$h"
+  # The host compiler, not the NDK's: clear the target toolchain variables setup_abi exported.
+  env -u CC -u CXX -u AR -u RANLIB -u NM -u STRIP -u LD -u OBJDUMP -u READELF -u PKG_CONFIG_LIBDIR \
+    cmake -S "$SRC/protobuf" -B "$h/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cc -DCMAKE_CXX_COMPILER=c++ \
+      -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_WITH_ZLIB=OFF -Dprotobuf_BUILD_EXAMPLES=OFF > "$h/configure.log"
+  env -u CC -u CXX -u AR -u RANLIB -u NM -u STRIP -u LD -u OBJDUMP -u READELF cmake --build "$h/build" -j "$JOBS" --target protoc
+  echo "$stamp" > "$h/stamp"
 }
 
 unversion_libtool() {  # Android loads lib<name>.so only: drop libtool's soname versions
@@ -468,6 +488,89 @@ print(*out.values())' "${PL_FLAGS[@]}"))
     -DOPENMP_BUILD=OFF -DGRAPHICS_DISABLED=ON -DENABLE_NATIVE=OFF -DINSTALL_CONFIGS=OFF -DENABLE_CCACHE=OFF \
     -DENABLE_PRECOMPILED_HEADERS=OFF -DSW_BUILD=OFF -DLeptonica_DIR="$PREFIX/lib/cmake/leptonica" \
     -DLEPT_TIFF_RESULT=0  # cross build: Tesseract's Leptonica TIFF probe cannot run
+
+  # Language identification and translation (ADR-034, SUB-051/053): CLD3 and Bergamot, each a shared library that
+  # exports only lane C1's C API (shims/: mh_cld3_*, mh_bergamot_*). Static dependencies inside them are linked with
+  # --exclude-libs,ALL so nothing else leaks (libcld3's protobuf 21.12 and libbergamot's protobuf-lite 3.6.1 stay apart).
+  host_protoc
+  cmake_build protobuf -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_PROTOC_BINARIES=OFF -Dprotobuf_BUILD_LIBPROTOC=OFF \
+    -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_WITH_ZLIB=OFF -Dprotobuf_BUILD_EXAMPLES=OFF -Dprotobuf_INSTALL=ON
+  local cld3_srcs=(base embedding_feature_extractor embedding_network feature_extractor feature_types fml_parser
+    language_identifier_features lang_id_nn_params nnet_language_identifier registry relevant_script_feature
+    sentence_features task_context task_context_params unicodetext utils workspace script_span/generated_entities
+    script_span/getonescriptspan script_span/utf8statetable script_span/offsetmap script_span/text_processing
+    script_span/fixunicodevalue)
+  local shimflags="-std=c++17 -O2 $HARDEN -fvisibility=hidden -fvisibility-inlines-hidden"
+  # CLD3's CMakeLists builds a static library and its tests against a system protobuf; compile it directly instead.
+  if should_build cld3 "protoc $("$PROTOC" --version)" "$shimflags" "${cld3_srcs[@]}" "shim $(sha256sum "$ROOT/shims/cld3/"* | sha256sum | cut -c1-16)"; then
+    local b="$BUILD/cld3" f; rm -rf "$b"; mkdir -p "$b/cld_3/protos" "$b/obj"
+    "$PROTOC" --cpp_out="$b/cld_3/protos" -I"$SRC/cld3/src" "$SRC"/cld3/src/{feature_extractor,sentence,task_spec}.proto
+    {
+      for f in "${cld3_srcs[@]}"; do echo "$SRC/cld3/src/$f.cc"; done
+      ls "$b"/cld_3/protos/*.pb.cc
+      echo "$ROOT/shims/cld3/mediahro_cld3.cc"
+    } | xargs -P "$JOBS" -I{} sh -c 'o="$1/obj/$(echo "$2" | sha256sum | cut -c1-16).o"; $CXX $3 -I"$1" -I"$4" -I"$5" -I"$6" -MD -MF "${o%.o}.d" -c "$2" -o "$o"' \
+        _ "$b" {} "$shimflags" "$SRC/cld3/src" "$PREFIX/include" "$ROOT/shims/cld3"
+    "$CXX" -shared $LDHARDEN -Wl,--exclude-libs,ALL -Wl,-soname,libcld3.so -o "$PREFIX/lib/libcld3.so" "$b"/obj/*.o \
+      "$PREFIX/lib/libprotobuf-lite.a" -llog
+    install -m644 "$ROOT/shims/cld3/mediahro_cld3.h" "$PREFIX/include/"
+    finish cld3 "$b"
+  fi
+
+  # Bergamot: bergamot-translator's CMake builds Marian, SentencePiece, ssplit and the GEMM back ends as static
+  # libraries; the submodule directories are linked to their pinned sources. ARM uses ruy (int8 and SGEMM, with
+  # simd_utils); x86_64 uses intgemm with run-time ISA dispatch and ruy SGEMM, so no BLAS (MKL is proprietary) is needed.
+  local bt="$SRC/bergamot-translator" mr="$SRC/marian-dev" sub
+  for sub in 3rd_party/marian-dev:marian-dev 3rd_party/ssplit-cpp:ssplit-cpp; do
+    rm -rf "${bt:?}/${sub%%:*}"; ln -sfn "$SRC/${sub##*:}" "$bt/${sub%%:*}"
+  done
+  for sub in sentencepiece intgemm ruy simd_utils; do rm -rf "${mr:?}/src/3rd_party/$sub"; ln -sfn "$SRC/$sub" "$mr/src/3rd_party/$sub"; done
+  rm -rf "$SRC/ruy/third_party/cpuinfo"; ln -sfn "$SRC/cpuinfo" "$SRC/ruy/third_party/cpuinfo"
+  local barch; case "$ABI" in arm64-v8a) barch=armv8-a ;; armeabi-v7a) barch=armv7-a ;; x86_64) barch=x86-64 ;; esac
+  cmake_opts bergamot-translator -DBUILD_SHARED_LIBS=OFF -DCOMPILE_WASM=OFF -DUSE_WASM_COMPATIBLE_SOURCE=OFF -DCOMPILE_TESTS=OFF \
+    -DCOMPILE_UNIT_TESTS=OFF -DCOMPILE_PYTHON=OFF -DGIT_SUBMODULE=OFF -DBUILD_ARCH="$barch" -DCOMPILE_CUDA=OFF -DUSE_MKL=OFF \
+    -DUSE_FBGEMM=OFF -DUSE_RUY_SGEMM=ON -DUSE_SENTENCEPIECE=ON -DUSE_STATIC_LIBS=ON -DCOMPILE_LIBRARY_ONLY=ON -DCOMPILE_SERVER=OFF \
+    -DUSE_DOXYGEN=OFF -DSSPLIT_USE_INTERNAL_PCRE2=OFF -DSSPLIT_COMPILE_LIBRARY_ONLY=ON -DUSE_NCCL=OFF -DUSE_CUDNN=OFF \
+    -DSPM_ENABLE_SHARED=OFF -DSPM_ENABLE_TCMALLOC=OFF \
+    -DMARIAN_GIT_REVISION="$(python3 -c 'import json,sys;print(next(l["version"] for l in json.load(open(sys.argv[1]))["libraries"] if l["name"]=="marian-dev"))' "$ROOT/versions.json")"
+  if should_build bergamot-translator "${CMAKE_OPTS[@]}" "shim $(sha256sum "$ROOT/shims/bergamot/"* | sha256sum | cut -c1-16)"; then
+    local b="$BUILD/bergamot-translator"; rm -rf "$b"
+    cmake -S "$bt" -B "$b" "${CMAKE_OPTS[@]}"
+    # Marian's translation units need ~2 GB each with ThinLTO: cap the jobs by memory (7 GB WSL hosts, 16 GB runners).
+    local mem_jobs; mem_jobs=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 2000000 )); [ "$mem_jobs" -ge 1 ] || mem_jobs=1
+    cmake --build "$b" -j "$(( mem_jobs < JOBS ? mem_jobs : JOBS ))" --target bergamot-translator
+    # The shim needs exactly Marian's defines and include paths (ARM/FMA/SSE for simd_utils, USE_RUY_SGEMM, ...): compile
+    # it with the command CMake generated for one of bergamot-translator's own sources, with hidden visibility added.
+    local svc; svc="$(ninja -C "$b" -t targets all | grep -o '^[^:]*translator/[^:]*/service.cpp.o' | head -1)"
+    python3 - "$(ninja -C "$b" -t commands "$svc" | tail -1)" "$ROOT/shims/bergamot" "$b" <<'PY' > "$b/shim.sh"
+import shlex, sys
+cmd, shims, b = sys.argv[1], sys.argv[2], sys.argv[3]
+cmd = cmd.split("&&")[-1].strip()           # ninja may prefix "cd <dir> &&"
+args, out, skip = shlex.split(cmd), [], None
+for a in args:
+    if skip:
+        skip = None
+        continue
+    if a in ("-o", "-c", "-MF", "-MT", "-MQ"):
+        skip = a
+        continue
+    if a in ("-MD", "-MMD") or a.endswith("service.cpp"):
+        continue
+    out.append(a)
+out += ["-fvisibility=hidden", "-fvisibility-inlines-hidden", "-I" + shims,
+        "-MD", "-MF", b + "/mediahro_bergamot.d", "-c", shims + "/mediahro_bergamot.cc", "-o", b + "/mediahro_bergamot.o"]
+print(shlex.join(out))
+PY
+    (cd "$b" && sh "$b/shim.sh")
+    "$CXX" -shared $LDHARDEN -Wl,--exclude-libs,ALL -Wl,-soname,libbergamot.so -o "$PREFIX/lib/libbergamot.so" \
+      "$b/mediahro_bergamot.o" -Wl,--start-group $(find "$b" -name '*.a' | sort) -Wl,--end-group \
+      -L"$PREFIX/lib" -lpcre2-8 -llog -lz
+    install -m644 "$ROOT/shims/bergamot/mediahro_bergamot.h" "$PREFIX/include/"
+    finish bergamot-translator "$b"
+    for sub in marian-dev ssplit-cpp sentencepiece intgemm ruy cpuinfo simd_utils; do
+      scan_into "$sub" "$b" "libbergamot.so (bergamot-translator, static)"
+    done
+  fi
 }
 
 # --- staging, checks, packaging ---------------------------------------------------------------
@@ -544,6 +647,7 @@ PY
     [libnfs]="COPYING LICENCE-LGPL-2.1.txt LICENCE-BSD.txt" [libraw]="LICENSE.CDDL COPYRIGHT" [xz]="COPYING COPYING.0BSD"
     [zstd]="LICENSE" [libsmb2]="COPYING LICENCE-LGPL-2.1.txt" [fast_float]="LICENSE-MIT LICENSE-APACHE LICENSE-BOOST"
     [libffi]="LICENSE" [pcre2]="LICENCE.md" [leptonica]="leptonica-license.txt" [tesseract]="LICENSE"
+    [marian-dev]="LICENSE.md" [ssplit-cpp]="LICENSE.md"
   )
   for f in "$INFO"/*.json; do
     name="$(basename "$f" .json)"
