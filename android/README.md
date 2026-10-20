@@ -37,7 +37,7 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
   - Section GC (`-ffunction-sections -fdata-sections`, `-Wl,--gc-sections`) and identical-code folding
     (`-Wl,--icf=all`).
   - `-O2` for decode and render paths (FFmpeg, dav1d, libplacebo, mpv, libass/freetype/harfbuzz/fribidi,
-    image codecs, whisper); `-Os` for the rest (`SIZE_LIBS`).
+    image codecs, whisper, Tesseract); `-Os` for the rest (`SIZE_LIBS`, including Leptonica).
   - `llvm-strip --strip-unneeded` on every shipped `.so`; one `libc++_shared.so`.
   - To measure one optimisation, switch it off: `MEDIAHRO_NO_LTO=1`, `MEDIAHRO_NO_ICF=1`, `MEDIAHRO_NO_GC=1`,
     `MEDIAHRO_ALL_O2=1`.
@@ -70,6 +70,10 @@ CI installs exactly these (`.github/workflows/build.yml`, job `android`).
   directory from the app before the first libass use.
 - libnfs 8.0 is built without its multithreading layer (it does not compile against bionic): use one
   `nfs_context` per isolate/thread (lane B2).
+- Tesseract (SUB-051 OCR fallback, ADR-025 §5): `libtesseract.so` with its C API (`include/tesseract/capi.h`) over
+  `libleptonica.so`. No traineddata ships: download `<lang>.traineddata` (tessdata_fast / tessdata_best) and pass its
+  directory to `TessBaseAPIInit3`. The legacy engine is kept (OSD script detection needs it). No OpenMP: one
+  `TessBaseAPI` per isolate. Leptonica reads JPEG, TIFF and WebP; no PNG or GIF (pass pixels with `TessBaseAPISetImage`).
 - libvulkan, libEGL, libGLESv2, libmediandk, libaaudio, libOpenSLES and libandroid are NDK system libraries.
 
 ## Development

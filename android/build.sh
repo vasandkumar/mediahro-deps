@@ -144,7 +144,7 @@ EOF
 # Decode and render hot paths (FFmpeg, dav1d, libplacebo, mpv, libass + freetype/harfbuzz/fribidi for subtitle
 # rendering, image codecs, whisper) stay at -O2 so no speed budget moves (ADR-020).
 SIZE_LIBS="bzip2 brotli libdeflate expat libffi pcre2 glib fontconfig uchardet libiconv
-  libudfread libbluray libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint"
+  libudfread libbluray libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint leptonica"
 opt_level() { [ -n "${MEDIAHRO_ALL_O2:-}" ] && { echo 2; return; }; [[ " $(echo $SIZE_LIBS) " == *" $1 "* ]] && echo s || echo 2; }
 
 STEP=""; STEP_ARGS=()
@@ -456,6 +456,15 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   [ "$ABI" = x86_64 ] && ggml+=(-DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF -DGGML_SSE42=ON)
   cmake_build whisper.cpp -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DWHISPER_SDL2=OFF \
     -DWHISPER_CURL=OFF "${ggml[@]}"
+  # OCR fallback for SUB-051 (ADR-025 §5). Leptonica reads through the shipped libjpeg-turbo, libtiff, libwebp
+  # and the system zlib; PNG is off (no libpng is shipped, spng has another API), as are GIF and OpenJPEG.
+  cmake_build leptonica -DBUILD_PROG=OFF -DENABLE_PNG=OFF -DENABLE_GIF=OFF -DENABLE_OPENJPEG=OFF \
+    -DENABLE_JPEG=ON -DENABLE_TIFF=ON -DENABLE_WEBP=ON -DENABLE_ZLIB=ON -DSW_BUILD=OFF
+  # libtesseract and its C API only: no training tools (ICU, pango), libarchive, curl, OpenMP or ScrollView. Images
+  # arrive as pixels through Leptonica, so Tesseract's own libtiff input is off. Language data is downloaded by the app.
+  cmake_build tesseract -DBUILD_TRAINING_TOOLS=OFF -DBUILD_TESTS=OFF -DDISABLE_ARCHIVE=ON -DDISABLE_CURL=ON -DDISABLE_TIFF=ON \
+    -DOPENMP_BUILD=OFF -DGRAPHICS_DISABLED=ON -DENABLE_NATIVE=OFF -DINSTALL_CONFIGS=OFF -DENABLE_CCACHE=OFF \
+    -DENABLE_PRECOMPILED_HEADERS=OFF -DSW_BUILD=OFF -DLeptonica_DIR="$PREFIX/lib/cmake/leptonica" \n    -DLEPT_TIFF_RESULT=0 -DLEPT_TIFF_RESULT__TRYRUN_OUTPUT=  # cross build: its Leptonica TIFF probe cannot run
 }
 
 # --- staging, checks, packaging ---------------------------------------------------------------
@@ -531,7 +540,7 @@ PY
     [ffmpeg]="LICENSE.md COPYING.LGPLv2.1" [mpv]="Copyright LICENSE.LGPL" [flac]="COPYING.Xiph" [freetype]="LICENSE.TXT docs/FTL.TXT"
     [libnfs]="COPYING LICENCE-LGPL-2.1.txt LICENCE-BSD.txt" [libraw]="LICENSE.CDDL COPYRIGHT" [xz]="COPYING COPYING.0BSD"
     [zstd]="LICENSE" [libsmb2]="COPYING LICENCE-LGPL-2.1.txt" [fast_float]="LICENSE-MIT LICENSE-APACHE LICENSE-BOOST"
-    [libffi]="LICENSE" [pcre2]="LICENCE.md"
+    [libffi]="LICENSE" [pcre2]="LICENCE.md" [leptonica]="leptonica-license.txt" [tesseract]="LICENSE"
   )
   for f in "$INFO"/*.json; do
     name="$(basename "$f" .json)"

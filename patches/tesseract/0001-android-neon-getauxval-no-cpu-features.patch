@@ -1,0 +1,30 @@
+Tesseract 5.5.3 on Android: no cpu_features dependency; NEON detection via getauxval.
+
+CMakeLists.txt requires Google's cpu_features (CpuFeaturesNdkCompat) on Android
+but never defines HAVE_ANDROID_GETCPUFAMILY, so the library is linked and never
+used. It also never defines HAVE_GETAUXVAL, so on armeabi-v7a
+SIMDDetect::neon_available_ stays false and the NEON dot-product and
+int-matrix kernels are compiled but never selected. Bionic has had getauxval()
+since API 18 (mediahro-deps targets API 29), so define HAVE_GETAUXVAL and drop
+cpu_features. arm64-v8a (NEON always on) and x86_64 (cpuid) are unchanged.
+
+Licence: modification of Tesseract (Apache-2.0), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the tesseract-5.5.3 root.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -850,11 +850,9 @@
+ 
+ if(ANDROID)
+   add_definitions(-DANDROID)
+-  find_package(CpuFeaturesNdkCompat REQUIRED)
+-  target_include_directories(
+-    libtesseract
+-    PRIVATE "${CpuFeaturesNdkCompat_DIR}/../../../include/ndk_compat")
+-  target_link_libraries(libtesseract PRIVATE CpuFeatures::ndk_compat)
++  # Bionic has getauxval() since API 18: simddetect.cpp reads HWCAP_NEON from it on
++  # armeabi-v7a, so the cpu_features ndk_compat library is not needed.
++  add_definitions(-DHAVE_GETAUXVAL)
+ endif()
+ 
+ # ##############################################################################
