@@ -6,6 +6,7 @@
 //   3. 10-bit 4:4:4 does the same (the CONFIG_AV1_HIGHBITDEPTH path that HDR AVIF needs).
 //   4. Lossless (identity matrix, 4:4:4) round-trips bit-exactly (the lossless encoder mode).
 //   5. A multi-threaded encode (the pthread path) at a speed the app can use for batch convert.
+//   6. A sweep over every libavif speed (0..10) with 8-bit 4:2:0 and 10-bit 4:4:4, to reach the SIMD kernels of the slower presets.
 // With the argument "bench" it also encodes a 12 MP still at libavif speeds 6 and 8 and prints the time and size.
 // Prints one line per check and "selftest: PASS" or "selftest: FAIL"; exit status 0 only when everything passes.
 #include <dlfcn.h>
@@ -231,6 +232,19 @@ int main(int argc, char **argv) {
             &ms, true);
   roundtrip({"8-bit 4:2:0, 4 threads, speed 8", 512, 384, 8, AVIF_PIXEL_FORMAT_YUV420, false, false, 60, 8, 4, 30.0},
             &ms, true);
+
+  // Every libavif speed (libaom cpu-used 0..9 and the faster mapping at 10) on both pixel paths: the slower presets
+  // reach SIMD kernels the speed-6/8 cases above never call, which is where armeabi-v7a alignment bugs hide.
+  static char names[22][72];
+  int n = 0;
+  for (int speed = 0; speed <= 10; speed++) {
+    std::snprintf(names[n], sizeof names[n], "sweep 8-bit 4:2:0 q60 speed %d", speed);
+    roundtrip({names[n], 192, 128, 8, AVIF_PIXEL_FORMAT_YUV420, false, false, 60, speed, 2, 28.0}, &ms, true);
+    n++;
+    std::snprintf(names[n], sizeof names[n], "sweep 10-bit 4:4:4 q60 speed %d", speed);
+    roundtrip({names[n], 192, 128, 10, AVIF_PIXEL_FORMAT_YUV444, false, false, 60, speed, 2, 28.0}, &ms, true);
+    n++;
+  }
 
   if (bench) {
     for (int speed : {6, 8}) {

@@ -54,6 +54,7 @@ exit 0. The \"bench\" argument adds two 12 MP encodes at libavif speeds 6 and 8 
   ok   10-bit 4:4:4, quality 60, speed 6: ... PSNR >= 30 dB
   ok   lossless 8-bit 4:4:4 (identity matrix): ..., 0 mismatching samples
   ok   8-bit 4:2:0, 4 threads, speed 8: ... PSNR >= 30 dB
+  ok   sweep 8-bit 4:2:0 q60 speed 0 ... and 10-bit 4:4:4, every speed 0..10 (22 lines, PSNR >= 28 dB; speed 0 is the slowest)
   ok   bench 12 MP (4000x3000) 8-bit 4:2:0 quality 60 speed 6, 4 threads: <bytes> bytes, <ms> ms
   ok   bench 12 MP (4000x3000) 8-bit 4:2:0 quality 60 speed 8, 4 threads: <bytes> bytes, <ms> ms
   selftest: PASS

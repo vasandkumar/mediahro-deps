@@ -102,6 +102,21 @@ first store release.
   tag commit and file count re-checked by hand). The tarball is byte-identical to the tag's tree. If the tag cannot be
   reached when the release is built, say so in the PR and the release notes.
 
+## armeabi-v7a: patch `patches/libaom/0001-arm32-clang-single-register-neon.patch`
+
+The first device run (Samsung, Android 16) passed on arm64 and crashed on armeabi-v7a with SIGBUS (BUS_ADRALN) on the
+first encode. The crash report named `cfl_predict_lbd_neon` (libavif.so+0x414942): NDK r28's clang turns
+`vld1q_s16_x2()` into `vld1.16 {d22-d25}, [r3:256]`, a 256-bit alignment hint, but `CFL_CTX::ac_buf_q3` is only
+element-aligned. With `AOM_SIMD_CAPS=0` (NEON off at run time) the same binary passed with identical output sizes,
+about 3–4x slower, so the cause was NEON-only. libaom already has single-register fallbacks for the `_x2/_x4`
+intrinsics in `aom_dsp/arm/mem_neon.h`, but enables them only for clang <= 6 (Android <= 7). The patch enables them for
+every clang on 32-bit Arm (and `#undef`s clang's macro versions first); AArch64 and the NEON kernels themselves are
+unchanged. After the fix the rebuilt armv7 `libavif.so` has no 256-bit hinted access left and the CfL kernel uses
+plain `vld1.16 {d22, d23}, [r3]!` loads. The self-test now also sweeps libavif speeds 0..10 (8-bit 4:2:0 and 10-bit
+4:4:4) to reach the SIMD kernels of the slower presets. Remaining 64/128-bit hints in the armv7 build cannot be audited
+statically (about 24,000 sites); they rely on libaom's own `DECLARE_ALIGNED` data being aligned, which the sweep and the
+device runs exercise.
+
 ## To build (needs the orchestrator's go)
 
 1. Single-ABI proof (arm64): `ONLY="libaom libavif" android/build.sh <out> arm64-v8a` in the release work tree; record
