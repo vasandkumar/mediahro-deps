@@ -40,6 +40,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -288,6 +289,11 @@ def cmd_pin(args: argparse.Namespace) -> int:
                 if got != want:
                     raise SystemExit(f"upstream {algo} {want} != download {got}")
                 verified.append(f"checksum-file-{algo}")
+            if lib.get("sha1"):  # another project's own pin of the same file (e.g. onnxruntime's cmake/deps.txt)
+                got1 = hashlib.sha1(path.read_bytes()).hexdigest()  # noqa: S324 - cross-check only, SHA-256 is the pin
+                if got1 != lib["sha1"]:
+                    raise SystemExit(f"upstream sha1 {lib['sha1']} != download {got1}")
+                verified.append("upstream-sha1")
             fpr = verify_signature(lib, path, cache, fetch_keys=args.fetch_keys)
             if fpr:
                 lib["signature"]["fingerprint"] = fpr
@@ -310,9 +316,16 @@ def extract(archive: Path, dest: Path) -> None:
     tmp = dest.with_name(dest.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
-    with tarfile.open(archive) as tf:
-        kwargs = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
-        tf.extractall(tmp, **kwargs)  # noqa: S202 - hash and signature verified first
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            for name in zf.namelist():  # refuse absolute paths and ".." before extracting
+                if name.startswith(("/", "\\")) or ".." in Path(name).parts:
+                    raise SystemExit(f"sources: unsafe path {name!r} in {archive.name}")
+            zf.extractall(tmp)  # noqa: S202 - hash verified first
+    else:
+        with tarfile.open(archive) as tf:
+            kwargs = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+            tf.extractall(tmp, **kwargs)  # noqa: S202 - hash and signature verified first
     entries = list(tmp.iterdir())
     top = entries[0] if len(entries) == 1 and entries[0].is_dir() else tmp
     shutil.rmtree(dest, ignore_errors=True)
@@ -369,7 +382,12 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print(f"sources: SHA-256 mismatch for {lib['name']}: {got} != {lib['sha256']}", file=sys.stderr)
             return 1
         verify_signature(lib, path, cache)
-        extract(path, dest)
+        if lib.get("extract") == "file":  # a single file (e.g. an .onnx model), not an archive: kept as it is
+            shutil.rmtree(dest, ignore_errors=True)
+            dest.mkdir(parents=True)
+            shutil.copy2(path, dest / filename(expand(lib["source"], lib), lib))
+        else:
+            extract(path, dest)
         for patch in patches_for(lib["name"]):
             subprocess.run(["patch", "-p1", "--batch", "--forward", "--no-backup-if-mismatch", "-d", str(dest),
                             "-i", str(patch)], check=True)
