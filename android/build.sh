@@ -155,7 +155,9 @@ should_build() {  # skip when the stamp matches (source hash + recipe args), unl
   local stamp="$WORK/$ABI/stamps/$name" key
   key="$(cat "$SRC/$name/.mediahro-sha256" 2>/dev/null || echo local)|$(printf '%s\n' "$@" | sha256sum | cut -c1-16)"
   if [ -n "${ONLY:-}" ]; then
-    [[ " $ONLY " == *" $name "* ]] || { [ -f "$stamp" ] && return 1; }
+    # ONLY_STRICT=1 builds exactly the named steps (a partial proof build in a work dir that has none of the others);
+    # without it a step with no stamp is built even when ONLY does not name it.
+    [[ " $ONLY " == *" $name "* ]] || { [ -n "${ONLY_STRICT:-}" ] && return 1; [ -f "$stamp" ] && return 1; }
   elif [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$key" ]; then
     return 1
   fi
@@ -324,7 +326,7 @@ recipes() {
   meson_build glib -Dtests=false -Dinstalled_tests=false -Dintrospection=disabled -Dnls=disabled -Dlibmount=disabled \
     -Dselinux=disabled -Dxattr=false -Dsysprof=disabled -Dman-pages=disabled -Ddocumentation=false -Ddtrace=disabled \
     -Dsystemtap=disabled -Dlibelf=disabled -Dglib_debug=disabled -Dglib_assert=false -Dglib_checks=true
-  if [ ! -f "$INFO/proxy-libintl.json" ] || [ "$INFO/glib.json" -nt "$INFO/proxy-libintl.json" ]; then
+  if [ -d "$BUILD/glib" ] && { [ ! -f "$INFO/proxy-libintl.json" ] || [ "$INFO/glib.json" -nt "$INFO/proxy-libintl.json" ]; }; then
     scan_into proxy-libintl "$BUILD/glib" "libintl.so (glib subproject)"
   fi
 
@@ -413,8 +415,18 @@ print(*out.values())' "${PL_FLAGS[@]}"))
   cmake_build openexr -DOPENEXR_BUILD_TOOLS=OFF -DOPENEXR_INSTALL_TOOLS=OFF -DOPENEXR_INSTALL_EXAMPLES=OFF -DOPENEXR_BUILD_EXAMPLES=OFF \
     -DBUILD_TESTING=OFF -DOPENEXR_FORCE_INTERNAL_DEFLATE=OFF -DOPENEXR_FORCE_INTERNAL_IMATH=OFF -DOPENEXR_BUILD_PYTHON=OFF \
     -DOPENEXR_INSTALL_PKG_CONFIG=ON -DOPENEXR_ENABLE_THREADING=ON
-  cmake_build libavif -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_LIBYUV=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_BUILD_TESTS=OFF -DAVIF_JPEG=OFF \
-    -DAVIF_ZLIBPNG=OFF -DAVIF_LIBSHARPYUV=OFF -DAVIF_LIBXML2=OFF -DAVIF_BUILD_EXAMPLES=OFF
+  # AV1 encoder for AVIF export (IMG-010, ADR-037; dav1d decodes): libaom, encoder only, linked statically into
+  # libavif.so so no extra library ships. -O2 (speed of batch convert); good-quality/all-intra modes need
+  # CONFIG_REALTIME_ONLY=0 and 10-bit (HDR AVIF) needs CONFIG_AV1_HIGHBITDEPTH=1, so neither is trimmed (ADR-020).
+  # CPU features come from getauxval (API >= 18), so NDK cpu-features is dead code; x86_64 SIMD is assembled by nasm.
+  cmake_build libaom -DBUILD_SHARED_LIBS=OFF -DENABLE_APPS=OFF -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_TESTDATA=OFF \
+    -DENABLE_TOOLS=OFF -DENABLE_DOCS=OFF -DENABLE_NASM=ON -DCONFIG_AV1_DECODER=0 -DCONFIG_AV1_ENCODER=1 \
+    -DCONFIG_AV1_HIGHBITDEPTH=1 -DCONFIG_REALTIME_ONLY=0 -DCONFIG_RUNTIME_CPU_DETECT=1 -DCONFIG_MULTITHREAD=1 \
+    -DCONFIG_WEBM_IO=0 -DCONFIG_TUNE_VMAF=0 -DCONFIG_TUNE_BUTTERAUGLI=0 -DCONFIG_AV1_TEMPORAL_DENOISING=0
+  # --exclude-libs,ALL keeps libaom's symbols out of libavif.so's exports (only avif* is public).
+  cmake_build libavif -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_AOM=SYSTEM -DAVIF_CODEC_AOM_DECODE=OFF -DAVIF_CODEC_AOM_ENCODE=ON \
+    -DAVIF_LIBYUV=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_BUILD_TESTS=OFF -DAVIF_JPEG=OFF -DAVIF_ZLIBPNG=OFF -DAVIF_LIBSHARPYUV=OFF \
+    -DAVIF_LIBXML2=OFF -DAVIF_BUILD_EXAMPLES=OFF -DCMAKE_SHARED_LINKER_FLAGS="$LDHARDEN -Wl,--exclude-libs,ALL"
   autotools_build libexif --disable-docs --disable-nls
   autotools_build libraw --disable-examples --disable-openmp --enable-lcms --enable-jpeg --disable-jasper --enable-zlib
   mapfile -t VIPS_FLAGS < <(flags vips.flags; flags vips.android.flags)
@@ -650,6 +662,7 @@ PY
     [zstd]="LICENSE" [libsmb2]="COPYING LICENCE-LGPL-2.1.txt" [fast_float]="LICENSE-MIT LICENSE-APACHE LICENSE-BOOST"
     [libffi]="LICENSE" [pcre2]="LICENCE.md" [leptonica]="leptonica-license.txt" [tesseract]="LICENSE"
     [marian-dev]="LICENSE.md" [ssplit-cpp]="LICENSE.md"
+    [libaom]="LICENSE PATENTS third_party/libyuv/LICENSE third_party/fastfeat/LICENSE third_party/x86inc/LICENSE third_party/vector/LICENSE"
   )
   for f in "$INFO"/*.json; do
     name="$(basename "$f" .json)"

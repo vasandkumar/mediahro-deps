@@ -1,0 +1,51 @@
+libaom 3.15.2: 32-bit Arm clang must not use the multi-register NEON intrinsics.
+
+aom_dsp/arm/mem_neon.h falls back to single-register loads and stores for "deficient" 32-bit Arm compilers, but
+only for clang <= 6 (Android clang <= 7). A current clang (NDK r28) lowers vld1q_s16_x2() and friends to
+`vld1.16 {d22-d25}, [r3:256]` with an alignment hint the data does not honour: CFL_CTX::ac_buf_q3 is only
+element-aligned, so the first encode on armeabi-v7a died with SIGBUS (BUS_ADRALN) in cfl_predict_lbd_neon
+(libavif.so+0x414942, Samsung, Android 16). Every use of these intrinsics in the 32-bit Arm build goes through the
+wrappers in this header (cfl_neon.c, highbd_intrapred_neon.c, temporal_filter_neon.c), so treating all clang on
+32-bit Arm as deficient fixes them together. AArch64 code is unchanged; armeabi-v7a stays on NEON.
+
+Related: LLVM's over-aligned vld1.64/vst1.64 reports (cfe-dev, February 2018, "Over-aligned vst1.64 and vld1.64 for
+arm-linux-androideabi"). No upstream libaom report found.
+
+Licence: modification of libaom (BSD-2-Clause), under the same licence.
+Applied by scripts/sources.py with patch -p1 from the libaom root.
+
+--- a/aom_dsp/arm/mem_neon.h	2026-10-21 08:13:49.429378093 +0000
++++ b/aom_dsp/arm/mem_neon.h	2026-10-21 08:13:49.429962475 +0000
+@@ -21,8 +21,11 @@
+ #endif
+ 
+ // DEFICIENT_CLANG_32_BIT includes clang-cl.
+-#if defined(__clang__) && defined(ARM_32_BIT) && \
+-    (__clang_major__ <= 6 || (defined(__ANDROID__) && __clang_major__ <= 7))
++// Every clang on 32-bit Arm is treated as deficient (Mediahro patch): the multi-register vld1q_*_x2/x3/x4 and
++// vst1_*_x2/x4 intrinsics are lowered to vld1/vst1 with a 128/256-bit alignment hint, which raises SIGBUS
++// (BUS_ADRALN) on data that is only element-aligned, such as CFL_CTX::ac_buf_q3. The wrappers below issue one
++// single-register access per vector instead.
++#if defined(__clang__) && defined(ARM_32_BIT)
+ #define DEFICIENT_CLANG_32_BIT
+ #endif
+ 
+@@ -34,6 +37,18 @@
+ // Support for xN Neon intrinsics is lacking in some compilers.
+ #if defined(DEFICIENT_CLANG_32_BIT) || defined(DEFICIENT_GCC_32_BIT)
+ 
++// clang defines the xN intrinsics as macros on 32-bit Arm; drop them so the wrappers below can take their names.
++#undef vld1q_u8_x3
++#undef vld1q_u8_x2
++#undef vld1q_u16_x2
++#undef vld1q_u16_x4
++#undef vld1q_s16_x2
++#undef vld1q_s16_x4
++#undef vst1_u8_x2
++#undef vst1_u8_x4
++#undef vst1q_u16_x2
++#undef vst1q_u16_x4
++
+ static inline uint8x16x3_t vld1q_u8_x3(const uint8_t *ptr) {
+   uint8x16x3_t res = { { vld1q_u8(ptr + 0 * 16), vld1q_u8(ptr + 1 * 16),
+                          vld1q_u8(ptr + 2 * 16) } };
