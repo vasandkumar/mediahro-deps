@@ -1,8 +1,30 @@
 # Minimal ONNX Runtime + face models for IMG-005 People (ADR-046, lane B4a)
 
-Status: **recipe and model pins prepared; nothing downloaded or compiled** (owner: no compiles while device batch 3 runs;
-message the orchestrator before downloading anything large). Sizes below are estimates and are replaced by measured
-numbers on the first proof build.
+Status: **pins, recipe and self-test written; nothing compiled** (owner: no compiles while device batch 3 runs). The 13 source
+pins and both models are downloaded and verified, the converter venv is hash-locked, the models are converted and the
+operator set is committed. The `android/build.sh` recipe and `android/selftest/ort_selftest.cc` are **unproven** until the
+first proof build. Library sizes below are estimates and are replaced by measured numbers then.
+
+## Measured so far (no compiler involved)
+
+- **Downloads:** all 13 source archives are 316 MB in total (the ORT v1.31.0 tarball alone is 280,355,422 bytes: it carries
+  its test data; my first estimate of ~60 MB was wrong). They go into `mediahro-deps-sources.tar`, which grows by that much.
+  Every dependency matched ORT's own SHA-1 from `cmake/deps.txt` (`upstream-sha1`); protobuf also matched GitHub's release
+  digest. The two models matched the Git LFS object ids and sizes on download.
+- **Converter wheels** (hash-locked in `android/ort/requirements.lock`, SHA-256 cross-checked against PyPI): onnx 1.22.0,
+  onnxruntime 1.31.0, numpy 2.5.4, protobuf 7.36.2, flatbuffers 25.12.19, ml_dtypes 0.6.0, typing_extensions 4.16.0,
+  packaging 26.3: 58 MB, installed offline into a throw-away venv.
+- **Conversion** (`--optimization_style Fixed --enable_type_reduction --target_platform arm`): `face_detection_yunet_2023mar.ort`
+  295,560 bytes (the .onnx is 232,589) and `face_recognition_sface_2021dec_int8.ort` 10,007,160 bytes (the .onnx is 9,896,933), so
+  the model payload per ABI archive is 10.3 MB, not 10.1. Two runs give **different bytes** for the .ort files (same operator
+  set), so the .ort files are not reproducible; the build compares the operator config, not the model hashes, and the hash of
+  the shipped .ort goes into the build-info.
+- **Operator set** (`android/ort/required_operators_and_types.config`, 8 lines): ai.onnx Transpose, Reshape, Sigmoid, Add, Sub,
+  BatchNormalization, PRelu, DequantizeLinear, QLinearMatMul, QuantizeLinear, Conv, Flatten, MaxPool, Resize, plus the
+  com.microsoft contrib ops FusedConv, QLinearAdd, QLinearConv and QLinearMul (so contrib ops stay enabled). About 18
+  operators in all, with float and int8 types only: that is why the library should stay small.
+- ORT's `reduce_op_kernels.py` runs with the venv Python against the committed config and writes its reduced registrations
+  (checked; no compile).
 
 ## What ships
 
@@ -35,10 +57,13 @@ model card says only "MobileFaceNet instances trained on the SFace loss function
 `licenses/models/` from the same commit (`face_detection_yunet.LICENSE` MIT, copyright 2020 Shiqi Yu, sha256
 `c83b8120…a958`; `face_recognition_sface.LICENSE` Apache-2.0, sha256 `cfc7749b…3d30`).
 
-## Source pins still to add (needs the download approval)
+## Source pins (done in `versions.json`)
 
-ORT builds its dependencies with CMake `FetchContent`; the build here runs with `FETCHCONTENT_FULLY_DISCONNECTED=ON` and
-`FETCHCONTENT_SOURCE_DIR_<NAME>` pointing at our verified sources, so nothing is fetched at build time. URLs are the ones in
+ORT builds its dependencies with CMake `FetchContent`. Instead of overriding each source directory (which would skip ORT's own
+dependency patches), the build gives ORT a **local mirror** (`onnxruntime_CMAKE_DEPS_MIRROR_DIR`): `<mirror>/<URL from deps.txt>`
+is a symlink to our verified download, so ORT unpacks, SHA-1-checks and patches the very files we pinned, and
+`FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER` stops it from picking up the protobuf 21.12 that CLD3 installed in the prefix. After
+configure the build fails if `<build>/_deps` contains anything that is not one of the pinned names. URLs are the ones in
 ORT's own `cmake/deps.txt` at v1.31.0 (tag commit `402979ac1bef89dcd55add41eaa7277c407599eb`); each gets a SHA-256 from the
 download and a `sha1` field that must equal ORT's pinned SHA-1 (cross-check by an independent statement, recorded as
 `upstream-sha1`). `sources.py` gains zip support and the `sha1` field for this (committed on the branch). Names are prefixed
@@ -63,28 +88,27 @@ download and a `sha1` field that must equal ORT's pinned SHA-1 (cross-check by a
 Not pinned on purpose: XNNPACK, pthreadpool, FP16, FXdiv, psimd (XNNPACK only; off), KleidiAI (optional Arm int8 kernels; off
 in the first build, evaluated afterwards), googletest/benchmark, mimalloc, dlpack, cxxopts, pybind11, the CUDA/Dawn/WebGPU/
 TensorRT/CoreML pins, and `cpp_client_telemetry`/`curl`/`mbedtls` (telemetry; mbedtls is also on the banned list).
-Sizes of the archives are not exposed before downloading; the estimate is roughly 80–120 MB in total, the ORT tarball
-(~60 MB) and Eigen being the largest.
+## Build recipe (`android/build.sh`: `ort_host_tools`, `ort_runtime`, `ort_models_info`; unproven)
 
-## Build recipe (to be implemented in `android/build.sh` after approval)
+Minimal build in ORT's sense, **ORT-format models**. The ORT block runs in full builds and with `ONLY=onnxruntime`, not
+with `ONLY=<other libraries>` (the host tools are a build of their own).
 
-Minimal build in ORT's sense, **ORT-format models**:
-
-1. **Host tools once per run:** `protoc` from the pinned protobuf v33.6 (the existing `host_protoc` pattern, with abseil from
-   the pinned source), and a throw-away Python venv with hash-pinned wheels (`onnx`, `onnxruntime==1.31.0`, `numpy`,
-   `flatbuffers`, `protobuf`, `packaging`, `sympy`, ... from a `requirements.lock` with `--require-hashes`) for the model
-   converter. Build tools only; nothing from PyPI is shipped.
+1. **Host tools once per run** (`$WORK/host/ort`, stamped on the pins and the committed files): the mirror, a host `protoc`
+   built from the pinned protobuf v33.6 with a host abseil from the pinned source (not ORT's prebuilt protoc zip), and the
+   converter venv installed from `android/ort/requirements.lock` with `--require-hashes --only-binary`. Build tools only.
 2. **Convert the models** (once, ABI-independent): `python -m onnxruntime.tools.convert_onnx_models_to_ort <models>
-   --optimization_style Fixed --enable_type_reduction --target_platform arm` → `*.ort` plus
-   `required_operators_and_types.config`. The config is committed (`android/ort/required_operators.config`) and the build
-   fails if a fresh conversion differs, so the operator set is reviewed like any other input.
-3. **Reduce and build** per ABI with direct CMake (NDK toolchain, the common hardening/LTO flags, `MinSizeRel`):
-   `-Donnxruntime_BUILD_SHARED_LIB=ON -Donnxruntime_MINIMAL_BUILD=ON -Donnxruntime_DISABLE_RTTI=ON
-   -Donnxruntime_DISABLE_EXCEPTIONS=ON -Donnxruntime_DISABLE_ML_OPS=ON -Donnxruntime_ENABLE_CPUINFO=ON
-   -Donnxruntime_USE_KLEIDIAI=OFF -Donnxruntime_USE_XNNPACK=OFF -Donnxruntime_BUILD_UNIT_TESTS=OFF
-   -Donnxruntime_ENABLE_PYTHON=OFF -Donnxruntime_USE_TELEMETRY=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=ON
-   -DFETCHCONTENT_SOURCE_DIR_*=... -DONNX_CUSTOM_PROTOC_EXECUTABLE=<host protoc>`, after running ORT's
-   `tools/ci_build/reduce_op_kernels.py` with the committed config (types reduced to those the models use).
+   --optimization_style Fixed --enable_type_reduction --target_platform arm` → `*.ort` plus a generated operator config; the
+   build fails if that config differs from the committed `android/ort/required_operators_and_types.config`, so the operator set
+   is reviewed like any other input.
+3. **Reduce and build** per ABI with direct CMake (NDK toolchain, the common hardening/LTO flags, `MinSizeRel`, `-Os`):
+   `-Donnxruntime_BUILD_SHARED_LIB=ON -Donnxruntime_MINIMAL_BUILD=ON -DONNX_MINIMAL_BUILD=ON -Donnxruntime_REDUCED_OPS_BUILD=ON
+   -Donnxruntime_DISABLE_RTTI=ON -Donnxruntime_DISABLE_EXCEPTIONS=ON -Donnxruntime_DISABLE_ML_OPS=ON
+   -Donnxruntime_ENABLE_CPUINFO=ON -Donnxruntime_USE_KLEIDIAI=OFF -Donnxruntime_USE_XNNPACK=OFF
+   -Donnxruntime_USE_TELEMETRY=OFF -Donnxruntime_BUILD_UNIT_TESTS=OFF -Donnxruntime_ENABLE_PYTHON=OFF
+   -DONNX_CUSTOM_PROTOC_EXECUTABLE=<host protoc> -Donnxruntime_CMAKE_DEPS_MIRROR_DIR=<mirror>
+   -DFETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER`, after running ORT's `reduce_op_kernels.py` with the committed config into the
+   build directory (`op_reduction.generated`, as ORT's own `build.py` does). `onnxruntime` is in `SIZE_LIBS` (`-Os`): it
+   runs in the background People index, not on a playback or UI path.
 4. **Stage:** `libonnxruntime.so` (stripped; SONAME, 16 KB alignment, RELRO/BIND_NOW as everywhere), `include/onnxruntime/`
    C headers, the two `.ort` models under `share/mediahro/models/` with `licenses/models/*.LICENSE`, build-info entries for
    ORT, its static dependencies (`scan_into`) and the models.
@@ -94,7 +118,7 @@ Minimal build in ORT's sense, **ORT-format models**:
 
 The minimal runtime cannot load `.onnx` files, so the archive carries the **`.ort`** conversions (about the same size) next to
 the pinned `.onnx` sources; the `.onnx` pins stay the source of truth. If the owner wants the `.onnx` files themselves in the
-archive too, that adds 10.1 MB per ABI archive (they are not duplicated in the APK, Flutter assets come from one copy).
+archive too, that adds 10.1 MB per ABI archive (on top of the 10.3 MB of .ort files) (they are not duplicated in the APK, Flutter assets come from one copy).
 
 ### Alternative considered: reduced operators without `--minimal_build`
 
@@ -108,7 +132,7 @@ brittle.
 |---|---|---|---|
 | `libonnxruntime.so` stripped, minimal + reduced ops | 2.5–3.5 MB | 2–3 MB | 3–4.5 MB |
 | the alternative (non-minimal) | +2–4 MB | +2–4 MB | +2–4 MB |
-| models per ABI archive (YuNet + SFace int8) | 10.1 MB | 10.1 MB | 10.1 MB |
+| models per ABI archive (YuNet + SFace int8) | 10.3 MB (.ort, measured) | 10.3 MB | 10.3 MB |
 
 Basis: Microsoft's mobile packages (tens of operators, ORT format) are in the 3–4 MB range per ABI; two small CNNs need fewer
 kernels, and the SFace int8 model dominates the model size. The target of 4–5 MB per ABI should hold with margin; the

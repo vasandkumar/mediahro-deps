@@ -1,0 +1,20 @@
+# Build-time tools for converting the pinned .onnx face models to ORT format (docs/onnxruntime-faces.md).
+# Installed into a throw-away venv with: pip install --require-hashes --no-deps --no-index --find-links <wheelhouse> -r requirements.lock
+# Nothing here is shipped. Hashes are SHA-256 of the wheels, cross-checked against the digests PyPI publishes.
+# CPython 3.12, manylinux x86_64. Regenerate with the same procedure when onnxruntime is bumped.
+flatbuffers==25.12.19 \
+    --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
+ml-dtypes==0.6.0 \
+    --hash=sha256:3b4a480aa8fd54a1805b8ac10f3f91763926a74f73c0c364c10f9231854f4170
+numpy==2.5.4 \
+    --hash=sha256:fbde6962867ee75b48b0ee29b2b9372ec5d617799dbaf38e82dc0596f2f7738a
+onnx==1.22.0 \
+    --hash=sha256:955e02e1f6d385b53d52f9cd7b9cdf5caf417c300bcfe3c64c6d542be763845b
+onnxruntime==1.31.0 \
+    --hash=sha256:5e129d6c56abd53e659cb70f00a108d6824086470ff99c2e47a82e5786563db3
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+protobuf==7.36.2 \
+    --hash=sha256:89f23aa53c24553a2416fd4fd1ec06f74fa42b14b546d8883128813f775bbfd2
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

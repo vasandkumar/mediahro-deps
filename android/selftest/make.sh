@@ -21,8 +21,9 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 tar -xzf "$ARCHIVE" -C "$OUT" --wildcards 'lib/*.so'
 mv "$OUT"/lib/*.so "$OUT/"; rmdir "$OUT/lib"
 bins=""; avif_run=""; avif_expect=""
-# AVIF_ONLY=1 (a partial proof archive without libcld3/libbergamot) stages only the AV1 test.
-if [ -z "${AVIF_ONLY:-}" ]; then
+# AVIF_ONLY=1 or NO_TEXT=1 (a partial proof archive without libcld3/libbergamot) skips the text test.
+NO_TEXT="${NO_TEXT:-${AVIF_ONLY:-}}"
+if [ -z "$NO_TEXT" ]; then
   "$CXX" -std=c++17 -O2 "${extra[@]}" -I"$SRC/simd_utils" -o "$OUT/text_selftest" "$ROOT/android/selftest/text_selftest.cc" -ldl
   bins=text_selftest
 fi
@@ -33,6 +34,38 @@ if [[ "$listing" == *include/avif/avif.h* ]]; then
   "$CXX" -std=c++17 -O2 -I"$inc/include" -o "$OUT/avif_selftest" "$ROOT/android/selftest/avif_selftest.cc" \
     -L"$OUT" -lavif -Wl,-rpath-link,"$OUT" -ldl
   rm -rf "$inc"; bins="$bins avif_selftest"
+fi
+# ONNX Runtime + the face models (ADR-046): only when the archive carries ORT's C API header and the .ort models.
+ort_run=""; ort_expect=""
+hdr="$(grep -m1 'onnxruntime_c_api\.h$' <<<"$listing" || true)"
+if [ -n "$hdr" ] && [[ "$listing" == *share/mediahro/models/* ]]; then
+  inc="$(mktemp -d)"; tar -xzf "$ARCHIVE" -C "$inc" "$hdr"
+  "$CXX" -std=c++17 -O2 -I"$inc/$(dirname "$hdr")" -o "$OUT/ort_selftest" "$ROOT/android/selftest/ort_selftest.cc" \
+    -L"$OUT" -lonnxruntime -Wl,-rpath-link,"$OUT" -ldl
+  rm -rf "$inc"; bins="$bins ort_selftest"
+  mkdir -p "$OUT/models"
+  tar -xzf "$ARCHIVE" -C "$OUT" --wildcards 'share/mediahro/models/*.ort'
+  mv "$OUT"/share/mediahro/models/*.ort "$OUT/models/"; rm -rf "$OUT/share"
+  d_dir=/data/local/tmp/mediahro-b4a-selftest/$ABI; d_models=$d_dir/models
+  ort_run="  adb -s <serial> shell mkdir -p $d_models
+  adb -s <serial> push models/face_detection_yunet_2023mar.ort models/face_recognition_sface_2021dec_int8.ort $d_models/
+  adb -s <serial> shell \"cd $d_dir && chmod 755 ort_selftest && LD_LIBRARY_PATH=$d_dir ./ort_selftest $d_models\""
+  ort_expect="
+ort_selftest (minimal ONNX Runtime, ORT-format YuNet and SFace int8), same rule: every line \"ok\", last line
+\"selftest: PASS\", exit 0. The inference times are measured numbers for the PR; copy them back:
+
+  ok   OrtGetApiBase / GetApi: 1.31.0
+  ok   YuNet session: 12 outputs, input [1x3x640x640]
+  ok   SFace session: 1 output, input [1x3x112x112]
+  ok   YuNet outputs are finite float tensors: 12 tensors, first [...], <ms> ms
+  ok   YuNet repeat run is bit-identical: <ms> ms
+  ok   SFace embedding has 128 floats: [1x128], <ms> ms
+  ok   SFace embedding is finite
+  ok   SFace embedding is not zero: L2 norm ...
+  ok   SFace same input gives the same embedding
+  ok   SFace different inputs give different embeddings: cosine ...
+  selftest: PASS
+"
 fi
 archive_sha="$(sha256sum "$ARCHIVE" | cut -c1-64)"
 d=/data/local/tmp/mediahro-b4a-selftest/$ABI
@@ -61,7 +94,7 @@ exit 0. The \"bench\" argument adds two 12 MP encodes at libavif speeds 6 and 8 
 "
 fi
 text_run=""; text_expect=""
-if [ -z "${AVIF_ONLY:-}" ]; then
+if [ -z "$NO_TEXT" ]; then
   text_run="  adb -s <serial> shell \"cd $d && chmod 755 text_selftest && LD_LIBRARY_PATH=$d ./text_selftest\""
   text_expect="
 text_selftest: every line must start with \"ok\", and the last line must be \"selftest: PASS\", exit status 0 (the numbers
@@ -79,10 +112,11 @@ On the device, with the lock held (rule 9), from this folder:
   adb -s <serial> push $(cd "$OUT" && ls -- *.so $bins | tr '\n' ' ')$d/
 $text_run
 $avif_run
+$ort_run
   adb -s <serial> shell rm -rf /data/local/tmp/mediahro-b4a-selftest
 $text_expect
 EOF
-[ -z "${AVIF_ONLY:-}" ] && cat <<'EOF'
+[ -z "$NO_TEXT" ] && cat <<'EOF'
   ok   mh_cld3_* symbols
   ok   mh_cld3_new(0, 512)
   ok   mh_cld3_find: got en (p=1.000, reliable=1), want en
@@ -95,6 +129,6 @@ EOF
   ok   simd_utils log_ps vs libm: max absolute error 4.77e-07 (limit 1e-6)
   selftest: PASS
 EOF
-printf '%s\n' "$avif_expect"
+printf '%s\n' "$avif_expect" "$ort_expect"
 } > "$OUT/RUN.txt"
 echo "selftest: staged $(ls "$OUT" | wc -l) files in $OUT; see RUN.txt"

@@ -144,7 +144,8 @@ EOF
 # Decode and render hot paths (FFmpeg, dav1d, libplacebo, mpv, libass + freetype/harfbuzz/fribidi for subtitle
 # rendering, image codecs, whisper) stay at -O2 so no speed budget moves (ADR-020).
 SIZE_LIBS="bzip2 brotli libdeflate expat libffi pcre2 glib fontconfig uchardet libiconv
-  libudfread libbluray libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint leptonica"
+  libudfread libbluray libarchive libexif imath openexr libopenmpt libsmb2 libnfs curl libebur128 chromaprint leptonica
+  onnxruntime"  # ONNX Runtime runs in the background People index (IMG-005), not on a playback or UI path
 opt_level() { [ -n "${MEDIAHRO_ALL_O2:-}" ] && { echo 2; return; }; [[ " $(echo $SIZE_LIBS) " == *" $1 "* ]] && echo s || echo 2; }
 
 STEP=""; STEP_ARGS=()
@@ -290,6 +291,132 @@ autotools_build() {  # autotools_build <name> [configure options...]  (in a copy
 }
 
 # --- recipes (dependency order) -----------------------------------------------------------
+
+# --- ONNX Runtime and the IMG-005 face models (ADR-046; docs/onnxruntime-faces.md) --------------------------------
+# UNPROVEN: written before the first proof build. A minimal ORT build can only load ORT-format models, so the pinned
+# .onnx files are converted once per run (hash-locked venv), and the operator set is checked against the committed config.
+# ORT's own dependencies come from its cmake/deps.txt URLs, served from a local mirror of our verified downloads
+# (onnxruntime_CMAKE_DEPS_MIRROR_DIR): ORT then unpacks, SHA-1-checks and patches them itself.
+ORT_DEPS="ort-abseil-cpp ort-eigen ort-flatbuffers ort-protobuf ort-onnx ort-re2 ort-date ort-mp11 ort-json ort-cpuinfo ort-gsl ort-safeint"
+ORT_FETCHED="abseil_cpp eigen flatbuffers protobuf onnx re2 date mp11 nlohmann_json pytorch_cpuinfo gsl safeint"  # FetchContent names
+
+ort_host_tools() {  # ort_host_tools → ORT_PY, ORT_PROTOC, ORT_MODELS, ORT_MIRROR (host tools and models, once per run)
+  local h="$WORK/host/ort" stamp
+  ORT_PY="$h/venv/bin/python"; ORT_PROTOC="$h/pb-build/protoc"; ORT_MODELS="$h/models"; ORT_MIRROR="$h/mirror"
+  stamp="$(cat "$SRC"/{ort-protobuf,ort-abseil-cpp,onnxruntime,yunet,sface}/.mediahro-sha256 \
+            "$ROOT/android/ort/requirements.lock" "$ROOT/android/ort/required_operators_and_types.config" | sha256sum | cut -c1-16)"
+  [ "$(cat "$h/stamp" 2>/dev/null)" = "$stamp" ] && return 0
+  log "onnxruntime host tools"
+  rm -rf "$h"; mkdir -p "$h"
+  # 1. The mirror: <mirror>/<deps.txt URL without https://> -> our verified download.
+  python3 - "$ROOT" "$WORK/downloads" "$ORT_MIRROR" $ORT_DEPS <<'PY'
+import importlib.util, json, pathlib, sys
+root, dl, mirror, *names = sys.argv[1:]
+root = pathlib.Path(root)
+spec = importlib.util.spec_from_file_location("sources", root / "scripts/sources.py")
+s = importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
+libs = {l["name"]: l for l in json.load(open(root / "versions.json", encoding="utf-8"))["libraries"]}
+for n in names:
+    lib = libs[n]; url = s.expand(lib["source"], lib)
+    assert url.startswith("https://"), url
+    f = pathlib.Path(dl) / s.filename(url, lib)
+    assert f.is_file(), f
+    dest = pathlib.Path(mirror) / url[len("https://"):]
+    dest.parent.mkdir(parents=True, exist_ok=True); dest.symlink_to(f)
+PY
+  # 2. Host protoc from the pinned protobuf (needs abseil), not ORT's prebuilt binary. The host compiler, not the NDK's.
+  local hostenv=(env -u CC -u CXX -u AR -u RANLIB -u NM -u STRIP -u LD -u OBJDUMP -u READELF -u PKG_CONFIG_LIBDIR)
+  "${hostenv[@]}" cmake -S "$SRC/ort-abseil-cpp" -B "$h/absl-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cc \
+    -DCMAKE_CXX_COMPILER=c++ -DCMAKE_CXX_STANDARD=17 -DABSL_PROPAGATE_CXX_STD=ON -DABSL_BUILD_TESTING=OFF \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$h/absl-prefix" > "$h/absl.log" 2>&1
+  "${hostenv[@]}" cmake --build "$h/absl-build" -j "$JOBS" >> "$h/absl.log" 2>&1
+  "${hostenv[@]}" cmake --install "$h/absl-build" >> "$h/absl.log" 2>&1
+  "${hostenv[@]}" cmake -S "$SRC/ort-protobuf" -B "$h/pb-build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cc \
+    -DCMAKE_CXX_COMPILER=c++ -DCMAKE_CXX_STANDARD=17 -Dprotobuf_ABSL_PROVIDER=package -DCMAKE_PREFIX_PATH="$h/absl-prefix" \
+    -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_WITH_ZLIB=OFF > "$h/pb.log" 2>&1
+  "${hostenv[@]}" cmake --build "$h/pb-build" -j "$JOBS" --target protoc >> "$h/pb.log" 2>&1
+  [ -x "$ORT_PROTOC" ] || { tail -30 "$h/pb.log"; echo "build: host protoc was not built" >&2; exit 1; }
+  # 3. Converter venv from the hash-locked requirements (build tools only, nothing here ships).
+  python3 -m venv "$h/venv"
+  "$h/venv/bin/pip" install -q --require-hashes --no-deps --only-binary=:all: -r "$ROOT/android/ort/requirements.lock"
+  # 4. Convert the pinned .onnx models. The .ort files vary byte-wise between runs; the operator set must not.
+  mkdir -p "$h/onnx-in" "$ORT_MODELS"
+  cp "$SRC"/yunet/*.onnx "$SRC"/sface/*.onnx "$h/onnx-in/"
+  "$ORT_PY" -m onnxruntime.tools.convert_onnx_models_to_ort "$h/onnx-in" --output_dir "$ORT_MODELS" \
+    --optimization_style Fixed --enable_type_reduction --target_platform arm > "$h/convert.log" 2>&1 \
+    || { tail -30 "$h/convert.log"; echo "build: model conversion failed" >&2; exit 1; }
+  diff <(grep -v '^#' "$ROOT/android/ort/required_operators_and_types.config") \
+       <(grep -v '^#' "$ORT_MODELS/required_operators_and_types.config") \
+    || { echo "build: the converted models need other operators than android/ort/required_operators_and_types.config" >&2; exit 1; }
+  echo "$stamp" > "$h/stamp"
+}
+
+ort_runtime() {  # ort_runtime → libonnxruntime.so for $ABI (minimal build, reduced operators, no exceptions/RTTI)
+  local opts; cmake_opts onnxruntime \
+    -DPython_EXECUTABLE="$ORT_PY" -Donnxruntime_CMAKE_DEPS_MIRROR_DIR="$ORT_MIRROR" -DFETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER \
+    -DONNX_CUSTOM_PROTOC_EXECUTABLE="$ORT_PROTOC" -DCMAKE_BUILD_TYPE=MinSizeRel \
+    -DCMAKE_C_FLAGS_MINSIZEREL="-Os -DNDEBUG" -DCMAKE_CXX_FLAGS_MINSIZEREL="-Os -DNDEBUG" \
+    -Donnxruntime_BUILD_SHARED_LIB=ON -Donnxruntime_MINIMAL_BUILD=ON -DONNX_MINIMAL_BUILD=ON -Donnxruntime_REDUCED_OPS_BUILD=ON \
+    -Donnxruntime_DISABLE_RTTI=ON -Donnxruntime_DISABLE_EXCEPTIONS=ON -Donnxruntime_DISABLE_ML_OPS=ON \
+    -DCMAKE_ANDROID_RTTI=OFF -DCMAKE_ANDROID_EXCEPTIONS=OFF -DANDROID_MIN_SDK="$API" -DANDROID_USE_LEGACY_TOOLCHAIN_FILE=false \
+    -Donnxruntime_ENABLE_CPUINFO=ON -Donnxruntime_USE_KLEIDIAI=OFF -Donnxruntime_USE_XNNPACK=OFF -Donnxruntime_USE_TELEMETRY=OFF \
+    -Donnxruntime_USE_MIMALLOC=OFF -Donnxruntime_USE_NNAPI_BUILTIN=OFF -Donnxruntime_ENABLE_PYTHON=OFF \
+    -Donnxruntime_BUILD_UNIT_TESTS=OFF -Donnxruntime_DEV_MODE=OFF
+  opts=("${CMAKE_OPTS[@]}")
+  should_build onnxruntime "${opts[@]}" "ops $(sha256sum "$ROOT/android/ort/required_operators_and_types.config" | cut -c1-16)" || return 0
+  local b="$BUILD/onnxruntime" mem_jobs; rm -rf "$b"; mkdir -p "$b"
+  mem_jobs=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1500000 )); [ "$mem_jobs" -ge 1 ] || mem_jobs=1
+  # ORT's op reduction writes the reduced kernel registrations under <build>/op_reduction.generated.
+  "$ORT_PY" "$SRC/onnxruntime/tools/ci_build/reduce_op_kernels.py" "$ROOT/android/ort/required_operators_and_types.config" \
+    --cmake_build_dir "$b" --enable_type_reduction > "$b/reduce_ops.log" 2>&1 || { tail -20 "$b/reduce_ops.log"; exit 1; }
+  cmake -S "$SRC/onnxruntime/cmake" -B "$b" "${opts[@]}"
+  # Nothing may be fetched that is not one of the pinned ort-* sources.
+  local d
+  for d in $(cd "$b/_deps" 2>/dev/null && ls -d -- *-src 2>/dev/null | sed 's/-src$//'); do
+    [[ " $ORT_FETCHED " == *" $d "* ]] || { echo "build: ONNX Runtime fetched an unpinned dependency: $d" >&2; exit 1; }
+  done
+  cmake --build "$b" -j "$(( mem_jobs < JOBS ? mem_jobs : JOBS ))" --target onnxruntime
+  cmake --install "$b"
+  local so="$PREFIX/lib/libonnxruntime.so"
+  [ -f "$so" ] || { echo "build: libonnxruntime.so was not installed: $(ls "$PREFIX/lib" | grep -i onnxruntime | tr '\n' ' ')" >&2; exit 1; }
+  # Guards: only the C API is exported; no network stack or telemetry endpoint inside (owner rule: no phone-home SDKs).
+  "$NM" -D --defined-only "$so" | awk '{print $NF}' | grep -qx OrtGetApiBase || { echo "build: OrtGetApiBase is not exported" >&2; exit 1; }
+  if "$READELF" -dW "$so" | grep -qiE 'NEEDED.*(libcurl|libssl|libcrypto|libmbed|libgnutls)'; then
+    echo "build: libonnxruntime.so links a network or TLS library" >&2; exit 1
+  fi
+  if grep -aqiE 'events\.data\.microsoft\.com|vortex\.data\.microsoft|\.aria\.microsoft\.com|mobile\.events\.data' "$so"; then
+    echo "build: libonnxruntime.so contains a Microsoft telemetry endpoint" >&2; exit 1
+  fi
+  finish onnxruntime "$b"   # the scan covers ORT and the dependencies it unpacked under <build>/_deps
+  local dep
+  for dep in $ORT_DEPS; do ort_static_dep "$dep"; done
+}
+
+ort_static_dep() {  # ort_static_dep <name> → build-info for a dependency compiled into libonnxruntime.so
+  python3 - "$INFO/$1.json" "$1" <<'PY'
+import json, sys
+out, name = sys.argv[1:]
+json.dump({"name": name, "configure": ["built by ONNX Runtime's CMake from the pinned source (local mirror)"], "files": [],
+           "compiled_into": "libonnxruntime.so (static; scanned with onnxruntime)", "files_scanned": 0,
+           "gpl_only_sources": [], "gpl_with_exception_sources": []}, open(out, "w"), indent=2)
+PY
+}
+
+ort_models_info() {  # ort_models_info → build-info and licence texts for the two face models (assets, not code)
+  local name f
+  cp "$ROOT/licenses/models/face_detection_yunet.LICENSE" "$SRC/yunet/LICENSE"
+  cp "$ROOT/licenses/models/face_recognition_sface.LICENSE" "$SRC/sface/LICENSE"
+  for name in yunet sface; do
+    f="$(cd "$ORT_MODELS" && ls -- *.ort | grep -i "$([ "$name" = yunet ] && echo yunet || echo sface)")"
+    python3 - "$INFO/$name.json" "$name" "$f" "$(sha256sum "$ORT_MODELS/$f" | cut -c1-64)" <<'PY'
+import json, sys
+out, name, f, h = sys.argv[1:]
+json.dump({"name": name, "configure": [f"converted to ORT format: convert_onnx_models_to_ort --optimization_style Fixed --enable_type_reduction --target_platform arm; {f} sha256 {h}"],
+           "files": [f"share/mediahro/models/{f}"], "compiled_into": "none (model asset)", "files_scanned": 0,
+           "gpl_only_sources": [], "gpl_with_exception_sources": []}, open(out, "w"), indent=2)
+PY
+  done
+}
 
 recipes() {
   local vk="$SRC/vulkan-headers"
@@ -585,6 +712,14 @@ PY
       scan_into "$sub" "$b" "libbergamot.so (bergamot-translator, static)"
     done
   fi
+
+  # IMG-005 People (ADR-046): minimal ONNX Runtime and the two face models in ORT format.
+  # (Not with ONLY=<other libraries>: the host tools are a build of their own.)
+  if { [ -z "${ONLY:-}" ] || [[ " $ONLY " == *" onnxruntime "* ]]; } && [[ " ${SKIP:-} " != *" onnxruntime "* ]]; then
+    ort_host_tools
+    ort_runtime
+    ort_models_info
+  fi
 }
 
 # --- staging, checks, packaging ---------------------------------------------------------------
@@ -640,6 +775,10 @@ for p in sorted(pathlib.Path(sys.argv[1]).glob("*.json")):
     cp "$PREFIX/lib/$name" "$st/lib/"
   done
   cp "$TOOLCHAIN/sysroot/usr/lib/$HOST/libc++_shared.so" "$st/lib/"
+  # IMG-005 face models (ADR-046), converted to ORT format: assets next to the runtime, not code.
+  if [ -f "$INFO/yunet.json" ] && [ -d "${ORT_MODELS:-}" ]; then
+    mkdir -p "$st/share/mediahro/models"; cp "$ORT_MODELS"/*.ort "$st/share/mediahro/models/"
+  fi
   for f in "$st"/lib/*.so; do "$STRIP" --strip-unneeded "$f"; done
   cp -a "$PREFIX/include/." "$st/include/"
   cp "$INFO"/*.json "$st/build-info/"
