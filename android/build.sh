@@ -155,7 +155,9 @@ should_build() {  # skip when the stamp matches (source hash + recipe args), unl
   local stamp="$WORK/$ABI/stamps/$name" key
   key="$(cat "$SRC/$name/.mediahro-sha256" 2>/dev/null || echo local)|$(printf '%s\n' "$@" | sha256sum | cut -c1-16)"
   if [ -n "${ONLY:-}" ]; then
-    [[ " $ONLY " == *" $name "* ]] || { [ -f "$stamp" ] && return 1; }
+    # ONLY_STRICT=1 builds exactly the named steps (a partial proof build in a work dir that has none of the others);
+    # without it a step with no stamp is built even when ONLY does not name it.
+    [[ " $ONLY " == *" $name "* ]] || { [ -n "${ONLY_STRICT:-}" ] && return 1; [ -f "$stamp" ] && return 1; }
   elif [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$key" ]; then
     return 1
   fi
@@ -324,7 +326,7 @@ recipes() {
   meson_build glib -Dtests=false -Dinstalled_tests=false -Dintrospection=disabled -Dnls=disabled -Dlibmount=disabled \
     -Dselinux=disabled -Dxattr=false -Dsysprof=disabled -Dman-pages=disabled -Ddocumentation=false -Ddtrace=disabled \
     -Dsystemtap=disabled -Dlibelf=disabled -Dglib_debug=disabled -Dglib_assert=false -Dglib_checks=true
-  if [ ! -f "$INFO/proxy-libintl.json" ] || [ "$INFO/glib.json" -nt "$INFO/proxy-libintl.json" ]; then
+  if [ -d "$BUILD/glib" ] && { [ ! -f "$INFO/proxy-libintl.json" ] || [ "$INFO/glib.json" -nt "$INFO/proxy-libintl.json" ]; }; then
     scan_into proxy-libintl "$BUILD/glib" "libintl.so (glib subproject)"
   fi
 

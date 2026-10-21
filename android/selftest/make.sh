@@ -20,16 +20,19 @@ esac
 rm -rf "$OUT"; mkdir -p "$OUT"
 tar -xzf "$ARCHIVE" -C "$OUT" --wildcards 'lib/*.so'
 mv "$OUT"/lib/*.so "$OUT/"; rmdir "$OUT/lib"
-"$CXX" -std=c++17 -O2 "${extra[@]}" -I"$SRC/simd_utils" -o "$OUT/text_selftest" "$ROOT/android/selftest/text_selftest.cc" -ldl
+bins=""; avif_run=""; avif_expect=""
+# AVIF_ONLY=1 (a partial proof archive without libcld3/libbergamot) stages only the AV1 test.
+if [ -z "${AVIF_ONLY:-}" ]; then
+  "$CXX" -std=c++17 -O2 "${extra[@]}" -I"$SRC/simd_utils" -o "$OUT/text_selftest" "$ROOT/android/selftest/text_selftest.cc" -ldl
+  bins=text_selftest
+fi
 # AV1 encoder round trip (ADR-037): only when the archive carries libavif's headers; linked against the shipped libavif.so.
-bins=text_selftest; avif_run=""; avif_expect=""
-if [[ "$(tar -tzf "$ARCHIVE")" == *$'
-include/avif/avif.h
-'* ]]; then  # (grep -q on a pipe would trip pipefail)
+listing="$(tar -tzf "$ARCHIVE")"  # (grep -q on a pipe would trip pipefail)
+if [[ "$listing" == *include/avif/avif.h* ]]; then
   inc="$(mktemp -d)"; tar -xzf "$ARCHIVE" -C "$inc" include/avif
   "$CXX" -std=c++17 -O2 -I"$inc/include" -o "$OUT/avif_selftest" "$ROOT/android/selftest/avif_selftest.cc" \
     -L"$OUT" -lavif -Wl,-rpath-link,"$OUT" -ldl
-  rm -rf "$inc"; bins="text_selftest avif_selftest"
+  rm -rf "$inc"; bins="$bins avif_selftest"
 fi
 archive_sha="$(sha256sum "$ARCHIVE" | cut -c1-64)"
 d=/data/local/tmp/mediahro-b4a-selftest/$ABI
@@ -56,21 +59,29 @@ exit 0. The \"bench\" argument adds two 12 MP encodes at libavif speeds 6 and 8 
   selftest: PASS
 "
 fi
-cat > "$OUT/RUN.txt" <<EOF
-text_selftest for $ABI, libraries from $(basename "$ARCHIVE") (sha256 $archive_sha)
+text_run=""; text_expect=""
+if [ -z "${AVIF_ONLY:-}" ]; then
+  text_run="  adb -s <serial> shell \"cd $d && chmod 755 text_selftest && LD_LIBRARY_PATH=$d ./text_selftest\""
+  text_expect="
+text_selftest: every line must start with \"ok\", and the last line must be \"selftest: PASS\", exit status 0 (the numbers
+may differ slightly):
+
+  ok   dlopen libcld3.so"
+fi
+{
+cat <<EOF
+selftests for $ABI, libraries from $(basename "$ARCHIVE") (sha256 $archive_sha)
 
 On the device, with the lock held (rule 9), from this folder:
 
   adb -s <serial> shell mkdir -p $d
   adb -s <serial> push $(cd "$OUT" && ls -- *.so $bins | tr '\n' ' ')$d/
-  adb -s <serial> shell "cd $d && chmod 755 text_selftest && LD_LIBRARY_PATH=$d ./text_selftest"
+$text_run
 $avif_run
   adb -s <serial> shell rm -rf /data/local/tmp/mediahro-b4a-selftest
-
-Expected (the numbers may differ slightly; every line must start with "ok", and the last line must be "selftest: PASS",
-exit status 0):
-
-  ok   dlopen libcld3.so
+$text_expect
+EOF
+[ -z "${AVIF_ONLY:-}" ] && cat <<'EOF'
   ok   mh_cld3_* symbols
   ok   mh_cld3_new(0, 512)
   ok   mh_cld3_find: got en (p=1.000, reliable=1), want en
@@ -82,6 +93,7 @@ exit status 0):
   ok   simd_utils exp_ps vs libm: max relative error 1.15e-07 (limit 1e-6)
   ok   simd_utils log_ps vs libm: max absolute error 4.77e-07 (limit 1e-6)
   selftest: PASS
-$avif_expect
 EOF
+printf '%s\n' "$avif_expect"
+} > "$OUT/RUN.txt"
 echo "selftest: staged $(ls "$OUT" | wc -l) files in $OUT; see RUN.txt"
