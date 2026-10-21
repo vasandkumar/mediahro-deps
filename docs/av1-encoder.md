@@ -1,8 +1,9 @@
 # AV1 encoder for AVIF export (ADR-037, lane B4a)
 
-Status: **prepared, not built.** The recipe and pin are on this branch; no native compile has run. Sizes below are
-estimates from the source tree and from distribution packages, and are replaced by measured numbers on the first build
-(one ABI, libaom + libavif only, before the release build).
+Status: **built and device-tested** (deps#17, merged as 7c104bd): proof builds on all three ABIs, round-trip self-test
+PASS on the Samsung for arm64-v8a and armeabi-v7a (x86_64 is link-time proof only, no x86 device). Sizes are measured
+(see "Size and budgets"); the estimates made before the first build were low by about 0.4–1.5 MB per ABI. The release
+build is a full clean 3-ABI build from one commit.
 
 ## Why
 
@@ -17,7 +18,7 @@ and Android has no OS AVIF encoder (C3's request, `docs/lanes/requests/c3-imagin
 | Build | plain CMake, same recipe shape as the other 40+ libraries; perl and nasm are already in the toolchain; official Android NDK support | needs a Rust toolchain with 3 Android targets, cargo-c, a vendored crate set; none of that exists in `mediahro-deps` and the "62 pinned sources, each with SHA-256 + OpenPGP signature" model does not fit crates |
 | libavif wiring | `-DAVIF_CODEC_AOM=SYSTEM` (libavif's default and best-tested AV1 encoder; its stills presets target libaom) | `-DAVIF_CODEC_RAV1E=SYSTEM`, fewer still-image tunings |
 | ARM SIMD | NEON intrinsics for arm64 and armv7, plus DOTPROD/I8MM/SVE variants picked at run time on arm64 | NEON assembly for arm64 only, as far as I know; armeabi-v7a would run scalar (to be confirmed) |
-| Size per ABI (stripped, estimate) | ~3–4 MB arm64, ~2.5–3.5 MB armv7, ~4–5 MB x86_64 | similar order; unknown without a build |
+| Size per ABI (stripped) | measured +4.39 MB arm64, +4.72 MB armv7, +6.56 MB x86_64 (see "Size and budgets") | not built; similar order expected |
 | Source pin | one tarball (`libaom-3.15.2.tar.gz`) pinned by SHA-256, tree identical to the git tag (see "How the source is verified") | tarball + vendored crates |
 
 Not considered further: SVT-AV1 (built for server video throughput, large memory, x86 first; wrong tool for stills on
@@ -63,22 +64,34 @@ frame size, IntraBC motion search), which matters for AVIF.
 
 ## Size and budgets
 
-Reference points: Debian's `libaom3` 3.6.0 (decoder + encoder, all SIMD, 8/10-bit) installs at about 3.5 MiB on arm64 and
-2.4 MiB for the 1.0 series; the decoder is a small part of it, and 3.15 adds more arm64 variants, offset by ThinLTO, GC and
-ICF. That gives the estimates above (arm64 ≈ +3–4 MB). Current native set (v2026.10.5-android.1, stripped `.so`, 73
-libraries): arm64 57.6 MB, armeabi-v7a 41.3 MB, x86_64 66.9 MB.
+Measured (stripped `libavif.so`, proof builds of deps#17, `-O2`, ThinLTO, GC, ICF):
 
-- `libavif.so` goes from 211 KB (arm64) to roughly 3.5 MB: the file-level >5 % regression gate on `tools/perf/baseline.json`
-  will trip for `libavif.so` and for the arm64 total (+5–7 %). Per ADR-020 the PR justifies it with `IMG-010` and the
-  orchestrator raises the baseline in the merge commit.
+| ABI | v2026.10.5-android.1 | with the encoder | growth |
+|---|---|---|---|
+| arm64-v8a | 211,088 | 4,597,704 | +4.39 MB |
+| armeabi-v7a | 157,244 | 4,875,496 | +4.72 MB |
+| x86_64 | 202,880 | 6,758,928 | +6.56 MB |
+
+`libdav1d.so` is unchanged. The estimate made before the first build (from Debian's `libaom3` 3.6.0, about 3.5 MiB on
+arm64 with decoder and all SIMD) was +3–4 / +2.5–3.5 / +4–5 MB, so libaom 3.15 with its extra arm64 and 32-bit variants
+is larger than the reference. libaom at `-Os` gave 3,936,488 bytes on arm64 (-0.66 MB, -14 %) at an unmeasured speed
+cost; `-O2` is kept (ADR-020). Current native set (v2026.10.5-android.1, stripped `.so`, 73 libraries): arm64 57.6 MB,
+armeabi-v7a 41.3 MB, x86_64 66.9 MB; the arm64 total grows to about 62.0 MB (+7.6 %).
+
+Encode times on the Samsung SM-M176B (Android 16), 12 MP (4000x3000) 8-bit 4:2:0, quality 60, 4 threads: arm64-v8a
+965 ms at libavif speed 6 (40,281 B) and 440 ms at speed 8 (44,907 B); armeabi-v7a 1,426 ms (40,276 B) and 521 ms
+(44,958 B). The speed sweep 0..10 passes on both (speed 0 on a small image: arm64 309 ms 8-bit / 433 ms 10-bit,
+armeabi-v7a 446 / 696 ms). armeabi-v7a with NEON off at run time is about 3–4x slower.
+
+- The file-level >5 % regression gate on `tools/perf/baseline.json` trips for `libavif.so` and for the arm64 total
+  (+7.6 %). Per ADR-020 the PR justifies it with `IMG-010` and the orchestrator raises the baseline in the merge commit.
 - Whether the **75 MB per-ABI installed ceiling** (ADR-019) still holds depends on the Flutter + app share, which is not
   measured yet; the first app build that embeds the pinned archives decides. If it does not hold, ADR-020 says the ceiling
   is re-set from the measurement, not the feature dropped.
 - Speed budgets are unaffected: the encoder runs only in batch convert, off the UI isolate; no cold-start or first-frame
   path loads it (`libavif.so` is loaded on first AVIF use).
-- Measured numbers to record on the first build, per ABI: stripped `libavif.so`, archive size, and encode time for a
-  12 MP still at libavif speed 6 and 8 (needs a device run by the orchestrator, e.g. `avif_selftest` encode + dav1d decode
-  round trip, to be written with the build).
+- The release archives get the same measurements again (stripped `libavif.so` per ABI, archive size), recorded in the
+  release notes.
 
 ## Legal note for the owner (docs/09)
 
@@ -117,10 +130,11 @@ plain `vld1.16 {d22, d23}, [r3]!` loads. The self-test now also sweeps libavif s
 statically (about 24,000 sites); they rely on libaom's own `DECLARE_ALIGNED` data being aligned, which the sweep and the
 device runs exercise.
 
-## To build (needs the orchestrator's go)
+## Release
 
-1. Single-ABI proof (arm64): `ONLY="libaom libavif" android/build.sh <out> arm64-v8a` in the release work tree; record
-   sizes; add an encode+decode round-trip to `android/selftest` and have the orchestrator run it.
-2. Same for armeabi-v7a and x86_64 (x86_64 link-time proof only).
-3. The release: a full clean 3-ABI build from a single commit (orchestrator's rule), then `gh release create`, then the
-   deps.lock pin PR, as for v2026.10.5-android.1.
+1. Done: proof builds on the three ABIs (`ONLY="dav1d libaom libavif" ONLY_STRICT=1 android/build.sh <out> <abi>`, about
+   2 minutes each), the round-trip self-test on the device, and deps#17.
+2. The release (v2026.10.6-android.1): a full clean 3-ABI build from one commit (7c104bd, in the `b4a-rel` work tree, no
+   cache, a 4 GB free-RAM gate before each ABI), the text and AVIF self-tests staged from the release archives and run by
+   the orchestrator, then `gh release create` (pre-release, no workflow) and the deps.lock pin PR, as for
+   v2026.10.5-android.1.
